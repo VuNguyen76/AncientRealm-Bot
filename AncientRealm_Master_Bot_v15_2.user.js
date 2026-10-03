@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Ancient Realm - Master Bot v15.2 (Triệt Tiêu Quái 0 Máu & 1 Máu, Khóa Tầm Đánh & Tự Hồi Sinh)
+// @name         Ancient Realm - Master Bot v15.3 (Khắc Chế Đánh Thường Boss, Kite Thả Diều & Lọc Quái 0/1 HP)
 // @namespace    http://tampermonkey.net/
-// @version      15.2.0
-// @description  Loại bỏ triệt để quái 0 máu và 1 máu (Dead Mob Blacklist & Fast Drop), khóa tầm đánh keep_range 0.88, tự động hồi sinh, Smart Potion 1200ms, né chiêu Boss 2.5D, Mobile Mini HUD 1 chạm.
+// @version      15.3.0
+// @description  Khắc chế tầm đánh thường của Boss (Boss Normal Attack Danger Zone & Safe Kite Distance), triệt tiêu quái 0/1 máu, khóa tầm keep_range 0.88, tự động hồi sinh.
 // @author       Antigravity
 // @match        *://ancientrealm.online/*
 // @match        *://*.ancientrealm.online/*
@@ -10,15 +10,17 @@
 // @grant        none
 // ==/UserScript==
 
-// AncientRealm Online - Master Bot v15.2.0 (Zero & 1 HP Mob Purge, Dead Blacklist, Combat Range Lock & Auto-Revive)
+// AncientRealm Online - Master Bot v15.3.0 (Boss Auto-Attack Kiting, Zero & 1 HP Purge, Range Lock & Auto-Revive)
 // ĐÁP ỨNG CHÍNH XÁC 100% YÊU CẦU CỦA SẾP:
-// 1. TRIỆT TIÊU TOÀN BỘ QUÁI 0 MÁU VÀ 1 MÁU (DEAD MOB BLACKLIST & FAST TARGET-DROP):
+// 1. KIỂM TRA & NÉ TẦM ĐÁNH THƯỜNG SIÊU ĐAU CỦA BOSS (BOSS NORMAL ATK RANGE KITING):
+//    - Hàm getMobNormalAttackRange(mob): Tính chuẩn xác bán kính đòn đánh thường của Boss (range + r + 15px buffer).
+//    - Với phái đánh xa (Ranged: Linh Mộc, Âm Dương, Sơn Thần): Tuyệt đối không cho Boss áp sát < bossNormalAtkRange + 30px!
+//      Khi Boss tiến vào vùng nguy hiểm, bot tự động lùi thả diều (kiting) ra cự ly vàng 210-260px vừa ngoài tầm đòn đánh thường của Boss vừa xả full combo bắn hạ Boss!
+//    - Với cận chiến (Melee: Chiến Binh): Đứng rìa ngoài tầm chém, né nhịp vung đòn (Swing CD), khi máu thấp < 65% lập tức lùi thoát tầm đánh thường để hồi máu!
+// 2. TRIỆT TIÊU TOÀN BỘ QUÁI 0 MÁU VÀ 1 MÁU (DEAD MOB BLACKLIST & FAST TARGET-DROP):
 //    - Hàm isMobAlive(m): Lọc triệt để quái có hp <= 1, st & 1 hoặc dead flag. Không bao giờ target/đuổi theo xác chết!
 //    - Bắt sự kiện die và snapshot s.n từ server: Lập tức hủy khóa target, un-target và đưa mob vào Blacklist 12s.
-//    - Kiểm tra và ép giải phóng window.GAME.lockId/targetId nếu game client tự khóa vào quái chết/1 máu.
-// 2. KHẮC PHỤC TRIỆT ĐỂ BÀI TOÁN "ĐI RA NGOÀI TẦM ĐÁNH":
-//    - Chuẩn hóa keep_range = 0.88 từ coviet-extension: reach = (baseRange + targetRadius) * 0.88.
-//    - Khi distToTarget <= reach: Lập tức khóa STAND, gọi stopMoving(), triệt tiêu hoàn toàn logic lùi lung tung!
+// 3. KHÓA TẦM ĐÁNH CHUẨN XÁC TRÊN QUÁI THƯỜNG (keep_range = 0.88): Trụ vững xả skill, không bao giờ tự ý lùi lung tung!
 //    - Vector Đẩy Lùi Vật Thể Tĩnh (Static Obstacle Repulsion):
 //      Quét toàn bộ 276 vật cản tĩnh (world.cols - cây, đá, tường) trong bán kính 90px.
 //      Vật cản tự động tạo ra lực đẩy cực mạnh hướng ra ngoài -> Bot KHÔNG BAO GIỜ lùi vào góc chết/bụi cây!
@@ -543,6 +545,27 @@
   }
 
   // =========================================================================
+  // BỘ NHẬN DIỆN BOSS & TẦM ĐÁNH THƯỜNG CỦA BOSS (BOSS NORMAL ATTACK RANGE)
+  // =========================================================================
+  function checkIsBossOrElite(mob) {
+    if (!mob) return false;
+    const def = getMobDef(mob);
+    if (def?.boss || def?.elite) return true;
+    const kind = (mob.kind || mob.type || '').toLowerCase();
+    if (['chantinh', 'daibang', 'moctinh', 'xuongho', 'boss', 'tinh'].some(k => kind.includes(k))) return true;
+    if ((mob.maxHp && mob.maxHp >= 15000) || (def?.hp && def.hp >= 15000)) return true;
+    return false;
+  }
+
+  function getMobNormalAttackRange(mob) {
+    if (!mob) return 85;
+    const def = getMobDef(mob);
+    const r = mob.r || def?.r || 28;
+    const range = def?.range || 64;
+    return range + r + 15; // 15px dung sai server latency & di chuyển
+  }
+
+  // =========================================================================
   // BỘ LỌC TRIỆT TIÊU QUÁI 0 MÁU & 1 MÁU (DEAD MOB BLACKLIST & FAST-DROP)
   // =========================================================================
   const deadMobBlacklist = new Map();
@@ -1052,7 +1075,7 @@
           pursuers: pursuers.map(p => p.mob),
           pursuerCount: pursuers.length,
           spawnCenter: findDynamicSpawnCenter(lockedTarget, me),
-          isBoss: !!(def?.boss || def?.elite || ['chantinh','daibang','moctinh','xuongho'].includes(lockedTarget.kind)),
+          isBoss: checkIsBossOrElite(lockedTarget),
           isPeeling: false
         };
       }
@@ -1077,7 +1100,7 @@
           pursuers: pursuers.map(p => p.mob),
           pursuerCount: pursuers.length,
           spawnCenter: findDynamicSpawnCenter(newTarget, me),
-          isBoss: !!(def?.boss || def?.elite || ['chantinh','daibang','moctinh','xuongho'].includes(newTarget.kind)),
+          isBoss: checkIsBossOrElite(newTarget),
           isPeeling: false
         };
       }
@@ -1142,16 +1165,13 @@
         pursuers: pursuers.map(p => p.mob),
         pursuerCount: pursuers.length,
         spawnCenter: findDynamicSpawnCenter(lockedTarget, me),
-        isBoss: !!(def?.boss || def?.elite || ['chantinh','daibang','moctinh','xuongho'].includes(lockedTarget.kind)),
+        isBoss: checkIsBossOrElite(lockedTarget),
         isPeeling: false
       };
     }
 
     // b. Nếu chưa có mục tiêu: Ưu tiên Boss nếu có trên map, nếu không lấy quái gần nhất
-    const activeBoss = allMobs.find(m => {
-      const def = getMobDef(m);
-      return !!(def?.boss || def?.elite || ['chantinh','daibang','moctinh','xuongho'].includes(m.kind));
-    });
+    const activeBoss = allMobs.find(m => checkIsBossOrElite(m));
 
     const chosen = activeBoss || closestMob;
     if (chosen) {
@@ -1169,7 +1189,7 @@
         pursuers: pursuers.map(p => p.mob),
         pursuerCount: pursuers.length,
         spawnCenter: findDynamicSpawnCenter(chosen, me),
-        isBoss: !!(def?.boss || def?.elite || ['chantinh','daibang','moctinh','xuongho'].includes(chosen.kind)),
+        isBoss: checkIsBossOrElite(chosen),
         isPeeling: false
       };
     }
@@ -2626,7 +2646,7 @@
       
       <!-- Top Telemetry Row -->
       <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 4px;">
-        <span id="sm-mini-status" style="font-weight: bold; color: #00e676; font-size: 11px;">🟢 v15.2.0</span>
+        <span id="sm-mini-status" style="font-weight: bold; color: #00e676; font-size: 11px;">🟢 v15.3.0</span>
         <span style="color: #ff5252;">❤️ <b id="sm-mini-hp">100%</b></span>
         <span style="color: #69f0ae;">🩸 <b id="sm-mini-pots">0</b></span>
         <span style="color: #ffd740;">💰 <b id="sm-mini-gold">0</b></span>
@@ -3742,12 +3762,20 @@
     const baseRange = roleInfo.baseRange || (isPlayerMelee ? 85 : 260);
     const targetRadius = targetMob.r || def?.r || 24;
 
-    // TẦM ĐÁNH CHUẨN XÁC (Chuẩn coviet-extension: keep_range = 0.88 để luôn nằm vững trong tầm đánh)
-    const reach = Math.max(35, Math.round((baseRange + targetRadius) * 0.88));
+    // Kiểm tra xem mục tiêu có phải là Boss hay Elite không
+    const isBossTarget = state.isBoss || checkIsBossOrElite(targetMob);
+    // Tầm đánh thường (auto-attack range) của Boss / quái: range + r + 15px buffer
+    const bossNormalAtkRange = getMobNormalAttackRange(targetMob);
 
-    // Khoảng cách bắt đầu tiếp cận lại nếu quái bị đẩy lùi hoặc di chuyển ra xa (hạn chế giật cục rung lắc)
+    // Tầm đánh chuẩn xác của bản thân (keep_range = 0.88 để nằm sâu trong tầm)
+    const reach = Math.max(35, Math.round((baseRange + targetRadius) * 0.88));
     const approachBuffer = isPlayerMelee ? 15 : 25;
     const reApproachDist = reach + approachBuffer;
+
+    const hpRatio = vitals.maxHp ? (vitals.hp / vitals.maxHp) : 1;
+    const nextAllowedSwing = mobSwingCooldowns.get(targetMob.id) || 0;
+    const isBossOnSwingCd = now < nextAllowedSwing;
+    const swingCdRemainingMs = Math.max(0, nextAllowedSwing - now);
 
     if (isCurrentlyStuck && now < stuckUntil) {
       movementState = 'BREAKOUT';
@@ -3756,11 +3784,102 @@
       if (statusTxt) {
         statusTxt.textContent = `🚨 GỠ KẸT ĐỊA HÌNH: Đang trượt bẻ lái ra khoảng trống!`;
       }
+    } else if (isBossTarget) {
+      // =========================================================================
+      // CHIẾN THUẬT BOSS: NÉ TẦM ĐÁNH THƯỜNG SIÊU ĐAU CỦA BOSS (BOSS NORMAL ATK RANGE)
+      // =========================================================================
+      if (!isPlayerMelee) {
+        // --- VAI TRÒ ĐÁNH XA (RANGED: Linh Mộc, Âm Dương, Sơn Thần) ---
+        // Vùng nguy hiểm: Khi Boss áp sát vào trong tầm đánh thường (+ 30px buffer)
+        const bossDangerZone = bossNormalAtkRange + 30; // ~145px - 170px
+        const bossSafeKiteDist = Math.max(bossNormalAtkRange + 65, Math.round(baseRange * 0.82)); // ~210px - 260px
+
+        if (movementState === 'KITE_BOSS') {
+          // Đang lùi thả diều: Chỉ dừng lại khi đã mở đủ cự ly an toàn
+          if (distToTarget >= bossSafeKiteDist) {
+            movementState = 'STAND';
+            stopMoving();
+          }
+        } else {
+          // Kiểm tra xem Boss có đang áp sát vào tầm đánh thường của nó không
+          if (distToTarget < bossDangerZone) {
+            movementState = 'KITE_BOSS';
+          } else if (distToTarget > reach) {
+            movementState = 'APPROACH';
+          } else {
+            movementState = 'STAND';
+            stopMoving();
+          }
+        }
+
+        if (movementState === 'KITE_BOSS') {
+          // Lùi dạt ra vùng an toàn tránh đòn đánh thường của Boss, kết hợp né vật cản 16 tia
+          const kiteVec = computeCongaKiteVector(me, [targetMob, ...state.pursuers], state.spawnCenter, true);
+          setSteeringVector(kiteVec.vx, kiteVec.vy);
+          if (statusTxt) {
+            statusTxt.textContent = `🏃 NÉ TẦM ĐÁNH THƯỜNG BOSS: ${mobName} (${Math.round(distToTarget)}px < ${bossDangerZone}px -> Lùi ra ${bossSafeKiteDist}px)!`;
+          }
+        } else if (movementState === 'APPROACH') {
+          const steer = calculateDirectSteering(me, targetMob.x, targetMob.y);
+          setSteeringVector(steer.dx, steer.dy);
+          if (statusTxt) {
+            statusTxt.textContent = `🏹 TIẾP CẬN TẦM XA BOSS: ${mobName} (${Math.round(distToTarget)}px -> ${reach}px)`;
+          }
+        } else {
+          // STAND: ĐỨNG TẠI CỰ LY VÀNG (Ngoài tầm đánh thường của Boss, trong tầm bắn của mình)
+          stopMoving();
+          if (statusTxt) {
+            statusTxt.textContent = `🏹 TRỤ CHÂN XẢ CHIÊU NGOÀI TẦM BOSS (${Math.round(distToTarget)}px > ${bossNormalAtkRange}px): XẢ FULL SKILL!`;
+          }
+        }
+      } else {
+        // --- VAI TRÒ CẬN CHIẾN (MELEE: Chiến Binh, Đao, Kiếm) ---
+        // 1. Nếu máu thấp (< 65%): Boss đánh thường siêu đau, lập tức lùi thoát tầm đánh thường để hồi máu
+        const isMeleeLowHp = hpRatio < 0.65;
+        const meleeRetreatDist = bossNormalAtkRange + 35; // ~150px
+        const meleeSafeDist = bossNormalAtkRange + 70;    // ~190px
+
+        if (movementState === 'KITE_BOSS') {
+          if (distToTarget >= meleeSafeDist && hpRatio >= 0.75) {
+            movementState = 'STAND';
+            stopMoving();
+          }
+        } else {
+          if (isMeleeLowHp && distToTarget < meleeRetreatDist) {
+            movementState = 'KITE_BOSS';
+          } else if (distToTarget > reach) {
+            movementState = 'APPROACH';
+          } else {
+            movementState = 'STAND';
+            stopMoving();
+          }
+        }
+
+        if (movementState === 'KITE_BOSS') {
+          const kiteVec = computeCongaKiteVector(me, [targetMob, ...state.pursuers], state.spawnCenter, true);
+          setSteeringVector(kiteVec.vx, kiteVec.vy);
+          if (statusTxt) {
+            statusTxt.textContent = `🩸 MÁU YẾU (${Math.round(hpRatio * 100)}%): LÙI THOÁT TẦM ĐÁNH THƯỜNG BOSS ĐỂ HỒI MÁU!`;
+          }
+        } else if (movementState === 'APPROACH') {
+          const steer = calculateDirectSteering(me, targetMob.x, targetMob.y);
+          setSteeringVector(steer.dx, steer.dy);
+          if (statusTxt) {
+            statusTxt.textContent = `⚔️ ÁP SÁT RÌA NGOÀI TẦM CHÉM BOSS: ${mobName} (${Math.round(distToTarget)}px -> ${reach}px)`;
+          }
+        } else {
+          // STAND: ĐỨNG CHÉM Ở RÌA NGOÀI TẦM ĐÁNH
+          stopMoving();
+          if (statusTxt) {
+            const swingStatus = isBossOnSwingCd ? `[Boss đang chờ hồi đòn ${Math.round(swingCdRemainingMs)}ms]` : `[Boss chuẩn bị vung đòn!]`;
+            statusTxt.textContent = `⚔️ CẬN CHIẾN CHÉM RÌA NGOÀI BOSS (${Math.round(distToTarget)}px): ${swingStatus}!`;
+          }
+        }
+      }
     } else {
-      // BÀI TOÁN TẦM ĐÁNH TUYỆT ĐỐI (SOLVED THOROUGHLY):
-      // 1. Khi đang APPROACH: nếu distToTarget <= reach -> Lập tức STAND và stopMoving().
-      // 2. Khi đang STAND: ĐỨNG YÊN TUYỆT ĐỐI! KHÔNG BAO GIỜ TỰ Ý LÙI BỎ TẦM!
-      //    Chỉ chuyển sang APPROACH khi quái chạy xa hơn reApproachDist.
+      // =========================================================================
+      // QUÁI THƯỜNG & PVP: GIỮ CHÂN KHÓA TẦM TUYỆT ĐỐI (KHÔNG LÙI LUNG TUNG)
+      // =========================================================================
       if (movementState === 'APPROACH') {
         if (distToTarget <= reach) {
           movementState = 'STAND';
@@ -3809,7 +3928,7 @@
     // Xả kỹ năng: Khi bị vây khẩn cấp, kích hoạt Choáng diện rộng ngay lập tức!
     executeOracleAttack(targetMob, now, distToTarget, state.dMin, state.closestMob, state.pursuerCount, isPinnedAgainstWall, state.isPvP);
 
-    if (miniStatusEl) miniStatusEl.textContent = cfg.enabled ? '🟢 Bot v15.2.0' : '🔴 Tạm dừng';
+    if (miniStatusEl) miniStatusEl.textContent = cfg.enabled ? '🟢 Bot v15.3.0' : '🔴 Tạm dừng';
     if (miniAtkEl) miniAtkEl.textContent = devState.totalAttacks;
     if (miniBreakoutEl) miniBreakoutEl.textContent = devState.breakoutsTriggered;
     if (miniStateEl && statusTxt) miniStateEl.textContent = statusTxt.textContent;
@@ -3817,7 +3936,7 @@
 
 
   window._ancientMasterBot = {
-    version: '15.2.0',
+    version: '15.3.0',
     cfg,
     devState,
     skillTimers,
@@ -3842,10 +3961,10 @@
       if (origUiChatLine && window.GAME?.ui) window.GAME.ui.chatLine = origUiChatLine;
       if (origUiToggleChat && window.GAME?.ui) window.GAME.ui.toggleChat = origUiToggleChat;
       delete window._ancientMasterBot;
-      console.log("%c[BOT v15.2.0] Đã gỡ bỏ toàn bộ giao diện và tiến trình.", "color: #ff9800; font-weight: bold;");
+      console.log("%c[BOT v15.3.0] Đã gỡ bỏ toàn bộ giao diện và tiến trình.", "color: #ff9800; font-weight: bold;");
     }
   };
 
-    console.log("%c[BOT v15.2.0] KHỞI ĐỘNG THÀNH CÔNG: LỌC QUÁI 0/1 MÁU, KHÓA TẦM ĐÁNH & AUTO-REVIVE!", "color: #00e676; font-size: 14px; font-weight: bold;");
+    console.log("%c[BOT v15.3.0] KHỞI ĐỘNG THÀNH CÔNG: KHẮC CHẾ ĐÁNH THƯỜNG BOSS, KITE THẢ DIỀU & LỌC QUÁI 0/1 HP!", "color: #00e676; font-size: 14px; font-weight: bold;");
   }
 })();
