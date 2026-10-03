@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Ancient Realm - Master Bot v15.2 (Triệt Tiêu Quái 0/1 Máu, Chuẩn Hóa Role Đánh Xa / Gần & Keep-Range Lock)
+// @name         Ancient Realm - Master Bot v15.5 (Triệt Tiêu Quái 0/1 Máu, Khóa Role Cận Chiến/Đánh Xa & Khôi Phục Di Chuyển v15.1)
 // @namespace    http://tampermonkey.net/
-// @version      15.2.0
-// @description  Triệt tiêu quái 0 máu và 1 máu, chuẩn hóa môn phái & Role cận chiến / đánh xa với nút bấm 1 chạm trên Mini HUD, khóa chân tầm đánh keep_range 0.85-0.88 theo coviet-extension.
+// @version      15.5.0
+// @description  Triệt tiêu quái 0 máu và 1 máu, chuẩn hóa môn phái & Role cận chiến / đánh xa với nút bấm 1 chạm trên Mini HUD, khôi phục logic di chuyển v15.1 keep_range 0.85-0.88 theo coviet-extension.
 // @author       Antigravity
 // @match        *://ancientrealm.online/*
 // @match        *://*.ancientrealm.online/*
