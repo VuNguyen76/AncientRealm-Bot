@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Ancient Realm - Master Bot v14.3 (Kiểm Tra Bản Đồ & Hòa Hợp Auto-Quest/Cày Quái)
+// @name         Ancient Realm - Master Bot v15.0 (Tự Hồi Sinh, Smart Potion, Né Chiêu Boss & Mobile Mini HUD)
 // @namespace    http://tampermonkey.net/
-// @version      14.3.0
-// @description  Kiểm tra cổng bản đồ (cấp/Q/vật phẩm), đồng bộ layout runtime, triệt tiêu xung đột giữa Auto-Quest & Auto-Cày, phân định 2 Role Đánh Gần & Đánh Xa.
+// @version      15.0.0
+// @description  Tự động hồi sinh và quay lại bãi farm/quest, Smart Potion 1200ms, né chiêu Boss đa hình dạng (circle, ring, cone, line) 2.5D, Mobile Mini HUD 1 chạm.
 // @author       Antigravity
 // @match        *://ancientrealm.online/*
 // @match        *://*.ancientrealm.online/*
@@ -10,7 +10,7 @@
 // @grant        none
 // ==/UserScript==
 
-// AncientRealm Online - Master Bot v14.0 (Anti-Pin, Aggro Retaliation & Roadblock Clear)
+// AncientRealm Online - Master Bot v15.0 (Auto-Revive, Smart Potion, Boss Hazard Dodging & Mobile Mini HUD)
 // ĐÁP ỨNG CHÍNH XÁC 100% YÊU CẦU CỦA SẾP:
 // 1. KHẮC PHỤC TRIỆT ĐỂ TÌNH TRẠNG "VÂY KHÔNG ĐI ĐƯỢC" (BỊ ÉP VÀO GỐC CÂY / VÁCH ĐÁ):
 //    - Vector Đẩy Lùi Vật Thể Tĩnh (Static Obstacle Repulsion):
@@ -329,7 +329,173 @@
   let movementState = 'STAND';
   let pendingLoadout = null;
   const mobSwingCooldowns = new Map();
-  const activeTelegraphs = [];
+  // Boss Hazard Dodging Engine (Học từ dodge.js của CoViet)
+  const activeHazards = [];
+  const activeTelegraphs = activeHazards; // Tương thích ngược
+
+  function addBossHazard(ev, now) {
+    const num = (v, d = 0) => (Number.isFinite(v) ? v : d);
+    activeHazards.push({
+      sh: ev.sh || 'circle',
+      x: ev.x,
+      y: ev.y,
+      r: num(ev.r, 100),
+      r0: num(ev.r0, 0),
+      w: num(ev.w, 0),
+      len: num(ev.len, 0),
+      arc: num(ev.arc, 0),
+      ang: num(ev.ang, 0),
+      until: now + num(ev.ms, 1000) + 250,
+      boomed: false
+    });
+  }
+
+  function handleBossBoom(ev, now) {
+    const num = (v, d = 0) => (Number.isFinite(v) ? v : d);
+    const dur = num(ev.dur, 0);
+    const sh = ev.sh || 'circle';
+    const i = activeHazards.findIndex(h => !h.boomed && h.sh === sh && Math.hypot(h.x - ev.x, h.y - ev.y) < 8);
+    if (i >= 0) {
+      if (dur > 0) Object.assign(activeHazards[i], { boomed: true, until: now + dur + 100 });
+      else activeHazards.splice(i, 1);
+    } else if (dur > 0) {
+      activeHazards.push({
+        sh, x: ev.x, y: ev.y, r: num(ev.r, 100), r0: num(ev.r0, 0),
+        w: num(ev.w, 0), len: num(ev.len, 0), arc: num(ev.arc, 0), ang: num(ev.ang, 0),
+        until: now + dur + 100, boomed: true
+      });
+    }
+  }
+
+  function isPointInsideHazard(h, px, py, pad = 37) {
+    const GROUND_K = 0.55;
+    const c = Math.cos(h.ang || 0), s = Math.sin(h.ang || 0);
+    const gx = px - h.x, gy = (py - h.y) / GROUND_K;
+    const lx = gx * c + gy * s, ly = -gx * s + gy * c;
+    const d = Math.hypot(lx, ly);
+    switch (h.sh) {
+      case 'ring':
+        return d < h.r + pad && d > h.r0 - pad;
+      case 'cone':
+        return d < h.r + pad && (d <= pad || Math.abs(Math.atan2(ly, lx)) <= h.arc + Math.atan2(pad, d));
+      case 'line':
+        return lx > -pad && lx < h.len + pad && Math.abs(ly) < (h.w / 2) + pad;
+      default:
+        return d < h.r + pad;
+    }
+  }
+
+  function findSafeDodgePoint(me, hazards) {
+    const RINGS = [55, 95, 145, 205, 285];
+    let best = null, minCost = Infinity;
+    for (const dist of RINGS) {
+      for (let angleDeg = 0; angleDeg < 360; angleDeg += 20) {
+        const rad = angleDeg * Math.PI / 180;
+        const cx = me.x + Math.cos(rad) * dist;
+        const cy = me.y + Math.sin(rad) * dist;
+        if (hazards.some(h => isPointInsideHazard(h, cx, cy, 35))) continue;
+        const cost = dist;
+        if (cost < minCost) {
+          minCost = cost;
+          best = { x: cx, y: cy };
+        }
+      }
+    }
+    return best;
+  }
+
+  // Tự Động Hồi Sinh & Trở Lại Bãi Train (v15.0)
+  const reviveRecoveryState = {
+    active: false,
+    step: 'IDLE', // 'DEAD' | 'CHECK_POTIONS' | 'BUYING_POTIONS' | 'RETURNING_TO_FARM'
+    deathTime: 0,
+    lastReviveAttempt: 0,
+    farmZone: null,
+    farmPos: null,
+    farmTargetMob: null,
+    statusText: ''
+  };
+  let lastFarmedZone = null;
+  let lastFarmedPos = null;
+  let lastFarmedMob = null;
+
+  // Smart Potion 1200ms Rhythm Engine (Học từ potion.js của CoViet)
+  let lastPotionUseTime = 0;
+  let lastManaUseTime = 0;
+
+  function getBestPotionSlot(type = 'heal') {
+    const inv = window.GAME?.self?.inv || [];
+    const GD = window.GAME?.GD || {};
+    let bestSlot = -1;
+    let bestVal = 0;
+    for (let i = 0; i < inv.length; i++) {
+      const s = inv[i];
+      if (!s || !s.id) continue;
+      const it = GD.items?.[s.id] || {};
+      if (type === 'heal') {
+        if (s.id.startsWith('p_hp') || it.type === 'potion') {
+          const val = it.heal || (s.id === 'p_hp3' ? 1000 : (s.id === 'p_hp2' ? 500 : (s.id === 'p_hp1' ? 200 : 100)));
+          if (val > bestVal) {
+            bestVal = val;
+            bestSlot = i;
+          }
+        }
+      } else if (type === 'mana') {
+        if (s.id.startsWith('p_mp') || it.type === 'mana') {
+          const val = it.mana || (s.id === 'p_mp3' ? 1000 : (s.id === 'p_mp2' ? 500 : (s.id === 'p_mp1' ? 200 : 100)));
+          if (val > bestVal) {
+            bestVal = val;
+            bestSlot = i;
+          }
+        }
+      }
+    }
+    return bestSlot;
+  }
+
+  function handleSmartPotion(now, vitals) {
+    if (!cfg.autoPotion) return;
+    const hpRatio = vitals.maxHp ? (vitals.hp / vitals.maxHp) : 1;
+    if (vitals.hp > 0 && hpRatio < 0.65) {
+      if (now - lastPotionUseTime >= 1200) {
+        lastPotionUseTime = now;
+        let used = false;
+        if (window.GAME?.ui?.quickUse) {
+          try { window.GAME.ui.quickUse('heal'); used = true; } catch (_) {}
+        }
+        const slot = getBestPotionSlot('heal');
+        if (slot >= 0) {
+          window.GAME.net?.send({ t: 'use', n: slot });
+          used = true;
+        }
+        if (used) {
+          devState.totalPotionsDrunk = (devState.totalPotionsDrunk || 0) + 1;
+        }
+      }
+    }
+
+    const currentMp = window.GAME?.self?.mp || 500;
+    if (currentMp < 150) {
+      if (now - lastManaUseTime >= 1200) {
+        lastManaUseTime = now;
+        if (window.GAME?.ui?.quickUse) {
+          try { window.GAME.ui.quickUse('mana'); } catch (_) {}
+        }
+        const slot = getBestPotionSlot('mana');
+        if (slot >= 0) {
+          window.GAME.net?.send({ t: 'use', n: slot });
+        }
+      }
+    }
+  }
+
+  function formatGold(n) {
+    if (!n) return '0';
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+    if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
+    return String(n);
+  }
+
   let capturedDrops = [];
 
   // Chống lặp cổng (Anti-Ping-Pong) & Chuyển map thông minh
@@ -410,12 +576,13 @@
             } else if (ev.k === 'hit' && ev.t < MOB_BASE) {
               devState.totalDamageTaken += ev.d || 0;
             } else if (ev.k === 'tele') {
-              activeTelegraphs.push({
-                x: ev.x, y: ev.y, r: ev.r || 100,
-                expiresAt: performance.now() + (ev.ms || 1200) + 150
-              });
+              addBossHazard(ev, now);
+            } else if (ev.k === 'boom') {
+              handleBossBoom(ev, now);
             }
           }
+        } else if (m.type === 'map' || m.type === 'welcome') {
+          activeHazards.length = 0;
         } else if (m.type === 'got') {
           devState.totalItemsPicked++;
           const lootEl = document.getElementById('sm-s-loot');
@@ -1880,12 +2047,18 @@
     const curZone = window.GAME?.world?.zone?.id;
     if (!curZone) return;
 
-    // 1. Tự bảo vệ khi bị quái áp sát lúc đang di chuyển
-    const dangerTele = activeTelegraphs.find(t => Math.hypot(t.x - me.x, t.y - me.y) < t.r + 25);
-    if (dangerTele) {
-      const angle = Math.atan2(me.y - dangerTele.y, me.x - dangerTele.x);
-      setSteeringVector(Math.cos(angle), Math.sin(angle));
-      if (statusTxt) statusTxt.textContent = `⚠️ NÉ CHIÊU ĐỎ TRÊN ĐƯỜNG ĐI!`;
+    // 1. Tự bảo vệ khi có chiêu nguy hiểm của Boss trên đường đi
+    const dangerH = activeHazards.find(h => isPointInsideHazard(h, me.x, me.y));
+    if (dangerH) {
+      const safePt = findSafeDodgePoint(me, activeHazards);
+      if (safePt) {
+        const steer = calculateDirectSteering(me, safePt.x, safePt.y);
+        setSteeringVector(steer.dx, steer.dy);
+      } else {
+        const angle = Math.atan2(me.y - dangerH.y, me.x - dangerH.x);
+        setSteeringVector(Math.cos(angle), Math.sin(angle));
+      }
+      if (statusTxt) statusTxt.textContent = `⚠️ NÉ CHIÊU BOSS [${(dangerH.sh || 'hazard').toUpperCase()}] TRÊN ĐƯỜNG ĐI!`;
       return;
     }
 
@@ -2139,7 +2312,7 @@
                   cursor: grab; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(0,230,118,0.3);">
         <div style="display: flex; align-items: center; gap: 7px; font-weight: bold; font-size: 12px; color: #fff;">
           <span style="font-size: 14px;">🤖</span>
-          <span style="background: linear-gradient(90deg, #00e676, #00b0ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 800; letter-spacing: 0.5px;">CỔ GIỚI BOT v14</span>
+          <span style="background: linear-gradient(90deg, #00e676, #00b0ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 800; letter-spacing: 0.5px;">CỔ GIỚI BOT v15.0</span>
           <span style="background: rgba(0,230,118,0.2); border: 1px solid #00e676; color: #00e676; font-size: 9px; padding: 1px 5px; border-radius: 8px; font-weight: 700;">60 FPS</span>
         </div>
         <div style="display: flex; gap: 6px; align-items: center;">
@@ -2368,15 +2541,34 @@
   const botMiniBadge = document.createElement('div');
   botMiniBadge.id = 'sm-mini-badge';
   botMiniBadge.innerHTML = `
-    <div style="position: fixed; top: 68px; right: 12px; background: rgba(10, 14, 23, 0.92); border: 1.5px solid #00e676;
-                border-radius: 20px; padding: 4px 12px; color: #fff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                font-size: 11px; z-index: 999999; box-shadow: 0 4px 18px rgba(0,0,0,0.7); backdrop-filter: blur(10px);
-                display: none; align-items: center; gap: 8px; cursor: grab; user-select: none; touch-action: none;">
-      <span id="sm-mini-status" style="font-weight: bold; color: #00e676;">🟢 v14</span>
-      <span style="color: #ffd76a;">⚔️ <b id="sm-mini-atk">0</b></span>
-      <span style="color: #ff9100;">🛡️ <b id="sm-mini-breakout">0</b></span>
-      <span id="sm-mini-state" style="color: #40c4ff; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Khởi tạo...</span>
-      <button id="sm-mini-btn-expand" title="Mở rộng giao diện" style="background: linear-gradient(135deg, #1b5e20, #00c853); border: none; color: #fff; border-radius: 10px; padding: 2px 9px; font-size: 10px; font-weight: bold; cursor: pointer;">📂 Mở</button>
+    <div style="position: fixed; top: 68px; right: 10px; background: rgba(10, 15, 26, 0.95); border: 1.5px solid #00e5ff;
+                border-radius: 14px; padding: 6px 10px; color: #fff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                font-size: 11px; z-index: 999999; box-shadow: 0 6px 24px rgba(0,0,0,0.8), 0 0 10px rgba(0,229,255,0.3); backdrop-filter: blur(12px);
+                display: none; flex-direction: column; gap: 5px; cursor: grab; user-select: none; touch-action: none; max-width: 290px;">
+      
+      <!-- Top Telemetry Row -->
+      <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 4px;">
+        <span id="sm-mini-status" style="font-weight: bold; color: #00e676; font-size: 11px;">🟢 v15.0</span>
+        <span style="color: #ff5252;">❤️ <b id="sm-mini-hp">100%</b></span>
+        <span style="color: #69f0ae;">🩸 <b id="sm-mini-pots">0</b></span>
+        <span style="color: #ffd740;">💰 <b id="sm-mini-gold">0</b></span>
+        <span id="sm-mini-role-badge" style="color: #00e5ff; font-weight: 600; font-size: 10px;">⚔️ Gần</span>
+      </div>
+
+      <!-- Live Status String -->
+      <div style="display: flex; align-items: center; justify-content: space-between; gap: 6px;">
+        <span id="sm-mini-state" style="color: #e0f2fe; font-size: 10.5px; max-width: 210px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500;">Sẵn sàng...</span>
+        <span style="color: #b0bec5; font-size: 10px;">⚔️ <b id="sm-mini-atk">0</b></span>
+      </div>
+
+      <!-- Quick 1-Touch Actions -->
+      <div style="display: flex; gap: 4px; align-items: center; justify-content: space-between; margin-top: 2px;">
+        <button id="sm-quick-shop" title="Đi mua máu & bán rác ngay" style="flex: 1; background: linear-gradient(135deg, #e65100, #ff9800); border: none; color: #fff; border-radius: 8px; padding: 4px 6px; font-size: 10px; font-weight: bold; cursor: pointer; white-space: nowrap; box-shadow: 0 2px 6px rgba(255,152,0,0.4);">⚡ Mua Máu</button>
+        <button id="sm-quick-store" title="Cất đồ quý vào Thủ Kho" style="flex: 1; background: linear-gradient(135deg, #00695c, #00bfa5); border: none; color: #fff; border-radius: 8px; padding: 4px 6px; font-size: 10px; font-weight: bold; cursor: pointer; white-space: nowrap; box-shadow: 0 2px 6px rgba(0,191,165,0.4);">📦 Cất Kho</button>
+        <button id="sm-quick-quest" title="Bật/Tắt Auto-Quest" style="flex: 1; background: linear-gradient(135deg, #1565c0, #29b6f6); border: none; color: #fff; border-radius: 8px; padding: 4px 6px; font-size: 10px; font-weight: bold; cursor: pointer; white-space: nowrap; box-shadow: 0 2px 6px rgba(41,182,246,0.4);">📜 Làm Q</button>
+        <button id="sm-mini-btn-expand" title="Mở Bảng Điều Khiển Đầy Đủ" style="flex: 1; background: linear-gradient(135deg, #2e7d32, #4caf50); border: none; color: #fff; border-radius: 8px; padding: 4px 6px; font-size: 10px; font-weight: bold; cursor: pointer; white-space: nowrap; box-shadow: 0 2px 6px rgba(76,175,80,0.4);">📂 Panel</button>
+        <button id="sm-mini-btn-hide" title="Thu nhỏ về nút 🤖" style="background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: #fff; border-radius: 8px; padding: 4px 6px; font-size: 10px; cursor: pointer;">❌</button>
+      </div>
     </div>
   `;
   document.body.appendChild(botMiniBadge);
@@ -2407,11 +2599,13 @@
   botMiniEl.style.display = 'none';
 
   function toggleBotPanel() {
-    if (botPanelEl.style.display === 'none') {
-      botPanelEl.style.display = 'flex';
+    if (botPanelEl.style.display !== 'none') {
+      botPanelEl.style.display = 'none';
+      botMiniEl.style.display = 'flex';
+    } else if (botMiniEl.style.display !== 'none') {
       botMiniEl.style.display = 'none';
     } else {
-      botPanelEl.style.display = 'none';
+      botMiniEl.style.display = 'flex';
     }
   }
   botFabEl.onclick = toggleBotPanel;
@@ -2578,10 +2772,15 @@
     };
   }
 
-  // Toggle thu gọn bot panel
+  // Toggle thu gọn bot panel & Quick Action Buttons
   const btnMinBot = botPanel.querySelector('#sm-btn-min');
   const btnCloseBot = botPanel.querySelector('#sm-btn-close');
   const btnExpandBot = botMiniBadge.querySelector('#sm-mini-btn-expand');
+  const btnHideMini = botMiniBadge.querySelector('#sm-mini-btn-hide');
+  const btnQuickShop = botMiniBadge.querySelector('#sm-quick-shop');
+  const btnQuickStore = botMiniBadge.querySelector('#sm-quick-store');
+  const btnQuickQuest = botMiniBadge.querySelector('#sm-quick-quest');
+
   if (btnMinBot) {
     btnMinBot.onclick = () => {
       botPanelEl.style.display = 'none';
@@ -2591,12 +2790,41 @@
   if (btnCloseBot) {
     btnCloseBot.onclick = () => {
       botPanelEl.style.display = 'none';
+      botMiniEl.style.display = 'flex';
     };
   }
   if (btnExpandBot) {
     btnExpandBot.onclick = () => {
       botMiniEl.style.display = 'none';
       botPanelEl.style.display = 'flex';
+    };
+  }
+  if (btnHideMini) {
+    btnHideMini.onclick = (e) => {
+      e.stopPropagation();
+      botMiniEl.style.display = 'none';
+    };
+  }
+  if (btnQuickShop) {
+    btnQuickShop.onclick = (e) => {
+      e.stopPropagation();
+      triggerShopTrip(true);
+    };
+  }
+  if (btnQuickStore) {
+    btnQuickStore.onclick = (e) => {
+      e.stopPropagation();
+      triggerStorageTrip();
+    };
+  }
+  if (btnQuickQuest) {
+    btnQuickQuest.onclick = (e) => {
+      e.stopPropagation();
+      cfg.autoQuest = !cfg.autoQuest;
+      const cb = botPanel.querySelector('#sm-auto-quest');
+      if (cb) cb.checked = cfg.autoQuest;
+      btnQuickQuest.style.background = cfg.autoQuest ? 'linear-gradient(135deg, #1565c0, #29b6f6)' : 'rgba(255,255,255,0.15)';
+      logQuest(`[UI] Đã ${cfg.autoQuest ? 'BẬT' : 'TẮT'} Tự Động Làm Nhiệm Vụ từ Quick Action.`);
     };
   }
 
@@ -2953,6 +3181,10 @@
   const miniAtkEl = botMiniBadge.querySelector('#sm-mini-atk');
   const miniBreakoutEl = botMiniBadge.querySelector('#sm-mini-breakout');
   const miniStateEl = botMiniBadge.querySelector('#sm-mini-state');
+  const miniHpEl = botMiniBadge.querySelector('#sm-mini-hp');
+  const miniPotsEl = botMiniBadge.querySelector('#sm-mini-pots');
+  const miniGoldEl = botMiniBadge.querySelector('#sm-mini-gold');
+  const miniRoleBadge = botMiniBadge.querySelector('#sm-mini-role-badge');
 
   let lastZoneId = null;
   let lastPickTime = 0;
@@ -3027,18 +3259,160 @@
     }
 
     const vitals = getPlayerHp();
-    if (cfg.autoPotion && vitals.hp > 0 && (vitals.hp / vitals.maxHp) < 0.65) {
-      if (window.GAME?.ui?.quickUse) window.GAME.ui.quickUse('heal');
+    const invInfo = inspectInventory();
+    handleSmartPotion(now, vitals);
+
+    // Cập nhật telemetry thời gian thực cho Mobile Mini HUD (v15.0)
+    if (miniHpEl) {
+      const hpPct = Math.round(vitals.maxHp ? (vitals.hp / vitals.maxHp) * 100 : 100);
+      miniHpEl.textContent = `${hpPct}%`;
+      miniHpEl.style.color = hpPct > 70 ? '#69f0ae' : (hpPct > 35 ? '#ffd740' : '#ff5252');
     }
-    const currentMp = window.GAME?.self?.mp || 500;
-    if (cfg.autoPotion && currentMp < 150) {
-      if (window.GAME?.ui?.quickUse) window.GAME.ui.quickUse('mana');
+    if (miniPotsEl) {
+      miniPotsEl.textContent = invInfo.hpPotionCount;
+      miniPotsEl.style.color = invInfo.hpPotionCount > 15 ? '#69f0ae' : '#ff5252';
+    }
+    if (miniGoldEl) {
+      miniGoldEl.textContent = formatGold(window.GAME?.self?.gold || 0);
+    }
+    if (miniRoleBadge) {
+      const r = getCharacterRoleInfo();
+      miniRoleBadge.textContent = `${r.icon} ${r.isMelee ? 'Gần' : 'Xa'}`;
+      miniRoleBadge.style.color = r.isMelee ? '#ff5252' : '#00e5ff';
+    }
+
+    // =======================================================================
+    // 0. AUTO-REVIVE & RECOVERY CONTROLLER (v15.0)
+    // =======================================================================
+    const isDead = (vitals.hp <= 0) || ((window.GAME?.self?.st & 1) === 1);
+    if (isDead) {
+      stopMoving();
+      currentTargetId = null;
+      if (window.GAME) {
+        window.GAME.lockId = 0;
+        window.GAME.targetId = 0;
+      }
+      if (!reviveRecoveryState.active) {
+        reviveRecoveryState.active = true;
+        reviveRecoveryState.step = 'DEAD';
+        reviveRecoveryState.deathTime = now;
+        reviveRecoveryState.farmZone = lastFarmedZone || zone?.id;
+        reviveRecoveryState.farmPos = lastFarmedPos || { x: Math.round(me.x), y: Math.round(me.y) };
+        reviveRecoveryState.farmTargetMob = cfg.farmMob || cfg.targetMob;
+        console.warn(`[BOT] Nhân vật đã tử trận! Ghi nhớ bãi train: ${reviveRecoveryState.farmZone} (${reviveRecoveryState.farmPos?.x}, ${reviveRecoveryState.farmPos?.y}), quái: ${reviveRecoveryState.farmTargetMob}`);
+      }
+      
+      reviveRecoveryState.statusText = '💀 Đã tử trận! Đang hồi sinh về Làng...';
+      if (statusTxt) statusTxt.textContent = reviveRecoveryState.statusText;
+      if (miniStateEl) {
+        miniStateEl.textContent = reviveRecoveryState.statusText;
+        miniStateEl.style.color = '#ff5252';
+      }
+
+      // Kích hoạt hồi sinh
+      if (now - (reviveRecoveryState.lastReviveAttempt || 0) > 1000) {
+        reviveRecoveryState.lastReviveAttempt = now;
+        try {
+          const deadBtn = document.getElementById('dead')?.querySelector('button');
+          if (deadBtn) deadBtn.click();
+          if (window.GAME?.ui?.revive) window.GAME.ui.revive();
+          window.GAME?.net?.send({ t: 'revive' });
+        } catch (_) {}
+      }
+      return;
+    }
+
+    // Xử lý phục hồi sau khi hồi sinh sống lại:
+    if (reviveRecoveryState.active) {
+      if (reviveRecoveryState.step === 'DEAD') {
+        reviveRecoveryState.step = 'CHECK_POTIONS';
+        reviveRecoveryState.revivedTime = now;
+      }
+
+      if (reviveRecoveryState.step === 'CHECK_POTIONS') {
+        const needsPotions = (invInfo.hpPotionCount <= cfg.autoShopHpPotionTrigger);
+        if (cfg.autoShop && needsPotions) {
+          reviveRecoveryState.statusText = '🛒 Hồi sinh: Máu thấp, tự động đi mua máu...';
+          reviveRecoveryState.step = 'BUYING_POTIONS';
+          triggerShopTrip(true);
+          autoShopState.farmZone = reviveRecoveryState.farmZone;
+          autoShopState.farmPos = reviveRecoveryState.farmPos;
+          autoShopState.farmTargetMob = reviveRecoveryState.farmTargetMob;
+        } else {
+          reviveRecoveryState.step = 'RETURNING_TO_FARM';
+        }
+      }
+
+      if (reviveRecoveryState.step === 'BUYING_POTIONS') {
+        if (!autoShopState.active) {
+          reviveRecoveryState.step = 'RETURNING_TO_FARM';
+        } else {
+          handleAutoShopStep(me, now, invInfo);
+          return;
+        }
+      }
+
+      if (reviveRecoveryState.step === 'RETURNING_TO_FARM') {
+        if (!reviveRecoveryState.farmZone || zone.id === reviveRecoveryState.farmZone) {
+          if (reviveRecoveryState.farmPos) {
+            const d = Math.hypot(reviveRecoveryState.farmPos.x - me.x, reviveRecoveryState.farmPos.y - me.y);
+            if (d > 85) {
+              reviveRecoveryState.statusText = `🏃 Trở lại tọa độ bãi cũ (${Math.round(d)}px)...`;
+              if (statusTxt) statusTxt.textContent = reviveRecoveryState.statusText;
+              if (miniStateEl) {
+                miniStateEl.textContent = reviveRecoveryState.statusText;
+                miniStateEl.style.color = '#69f0ae';
+              }
+              const steer = calculateDirectSteering(me, reviveRecoveryState.farmPos.x, reviveRecoveryState.farmPos.y);
+              setSteeringVector(steer.dx, steer.dy);
+              return;
+            }
+          }
+          stopMoving();
+          console.log(`[BOT] Đã trở lại bãi train an toàn sau khi hồi sinh!`);
+          if (reviveRecoveryState.farmTargetMob) {
+            cfg.targetMob = reviveRecoveryState.farmTargetMob;
+            const mobSel = botPanel.querySelector('#sm-mob-sel');
+            if (mobSel) mobSel.value = cfg.farmMob || cfg.targetMob || 'all';
+          }
+          reviveRecoveryState.active = false;
+          reviveRecoveryState.step = 'IDLE';
+        } else {
+          const route = safeMapRoute(zone.id, reviveRecoveryState.farmZone);
+          if (!route || route.length === 0) {
+            console.warn(`[BOT] Không tìm thấy đường từ ${zone.id} về ${reviveRecoveryState.farmZone}`);
+            reviveRecoveryState.active = false;
+            reviveRecoveryState.step = 'IDLE';
+          } else {
+            const nextHop = route[0];
+            const p = zone.portals?.find(pt => pt.to === nextHop.targetZone) || nextHop.portal;
+            if (p) {
+              const d = Math.hypot(p.x - me.x, p.y - me.y);
+              reviveRecoveryState.statusText = `🚪 [Hồi sinh] Đi qua cổng ${nextHop.targetZone} (${Math.round(d)}px)`;
+              if (statusTxt) statusTxt.textContent = reviveRecoveryState.statusText;
+              if (miniStateEl) {
+                miniStateEl.textContent = reviveRecoveryState.statusText;
+                miniStateEl.style.color = '#ffb300';
+              }
+              const steer = calculateDirectSteering(me, p.x, p.y);
+              setSteeringVector(steer.dx, steer.dy);
+              return;
+            }
+          }
+        }
+      }
+    }
+
+    // Ghi nhớ bãi farm khi đang cày bình thường (ngoài làng & không trong tiến trình shop/kho/hồi sinh)
+    if (zone && zone.id !== 'lang' && !autoShopState.active && !storageState.active && !reviveRecoveryState.active) {
+      lastFarmedZone = zone.id;
+      lastFarmedPos = { x: Math.round(me.x), y: Math.round(me.y) };
+      lastFarmedMob = cfg.farmMob || cfg.targetMob;
     }
 
     // =======================================================================
     // 1. AUTO-SHOP & AUTO-STORAGE CONTROLLER (HỌC TỪ COVIET)
     // =======================================================================
-    const invInfo = inspectInventory();
     if (elTrashSold) elTrashSold.textContent = devState.totalTrashSold;
     if (elPotionsBought) elPotionsBought.textContent = devState.totalPotionsBought;
 
@@ -3127,16 +3501,27 @@
     if (skThuyKinhEl) skThuyKinhEl.textContent = devState.skillsBreakdown.thuykinh;
     if (skThienLoiEl) skThienLoiEl.textContent = devState.skillsBreakdown.thienloi;
 
-    // 1. Né chiêu đỏ telegraph
-    for (let i = activeTelegraphs.length - 1; i >= 0; i--) {
-      if (now > activeTelegraphs[i].expiresAt) activeTelegraphs.splice(i, 1);
+    // 1. Né chiêu đỏ Boss & Hazard Geometry (Học từ dodge.js của CoViet)
+    for (let i = activeHazards.length - 1; i >= 0; i--) {
+      if (now > activeHazards[i].until) activeHazards.splice(i, 1);
     }
-    const dangerTele = activeTelegraphs.find(t => Math.hypot(t.x - me.x, t.y - me.y) < t.r + 25);
-    if (dangerTele) {
+    const dangerousHazard = activeHazards.find(h => isPointInsideHazard(h, me.x, me.y));
+    if (dangerousHazard) {
       movementState = 'RETREAT';
-      const angle = Math.atan2(me.y - dangerTele.y, me.x - dangerTele.x);
-      setSteeringVector(Math.cos(angle), Math.sin(angle));
-      if (statusTxt) statusTxt.textContent = `⚠️ NÉ CHIÊU ĐỎ CỦA BOSS!`;
+      devState.swingDodged++;
+      const safePt = findSafeDodgePoint(me, activeHazards);
+      if (safePt) {
+        const steer = calculateDirectSteering(me, safePt.x, safePt.y);
+        setSteeringVector(steer.dx, steer.dy);
+      } else {
+        const angle = Math.atan2(me.y - dangerousHazard.y, me.x - dangerousHazard.x);
+        setSteeringVector(Math.cos(angle), Math.sin(angle));
+      }
+      if (statusTxt) statusTxt.textContent = `⚠️ NÉ CHIÊU BOSS [${(dangerousHazard.sh || 'hazard').toUpperCase()}]!`;
+      if (miniStateEl) {
+        miniStateEl.textContent = `⚠️ Né ${dangerousHazard.sh || 'chiêu'}`;
+        miniStateEl.style.color = '#ff5252';
+      }
       return;
     }
 
@@ -3188,7 +3573,7 @@
       const validDrops = currentDrops.map(d => ({
         id: d[0], item: d[1], x: d[2], y: d[3], r: d[4], mine: d[6],
         dist: Math.hypot(d[2] - me.x, d[3] - me.y)
-      })).filter(d => d.dist <= cfg.lootRadius);
+      })).filter(d => d.dist <= cfg.lootRadius && !activeHazards.some(h => isPointInsideHazard(h, d.x, d.y, 20)));
 
       if (validDrops.length > 0) {
         movementState = 'STAND';

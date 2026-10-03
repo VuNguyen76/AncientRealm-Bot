@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Ancient Realm - Master Bot v14.3 (Kiểm Tra Bản Đồ & Auto-Quest Hòa Hợp)",
-  "version": "14.3.0",
-  "description": "Kiểm tra cổng bản đồ thông minh, đồng bộ layout thời gian thực, tách biệt cày quái & nhiệm vụ không xung đột, chuẩn hóa 2 Role Đánh Gần/Xa.",
+  "name": "Ancient Realm - Master Bot v15.0 (Tự Hồi Sinh, Smart Potion, Né Chiêu Boss & Mobile HUD)",
+  "version": "15.0.0",
+  "description": "Tự động hồi sinh và quay lại bãi farm/quest, Smart Potion 1200ms nhịp nhàng, né chiêu Boss đa hình (circle, ring, cone, line) 2.5D, Mobile Mini HUD 1 chạm.",
   "author": "Antigravity",
   "icons": {
     "48": "icon48.png",
