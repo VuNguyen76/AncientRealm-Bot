@@ -327,7 +327,7 @@
     autoShopSameMapOnly: false, // Tùy chọn giữ bãi: Chỉ bán khi có Shop cùng map, không nhảy cổng
     autoShopMaxHops: 3, // Giới hạn số cổng tối đa được phép đi (tránh đi lang thang)
     autoShopFreeSlotTrigger: 1, // Hành trang còn <= 1 ô trống -> Đi bán rác & nguyên liệu
-    autoShopHpPotionTrigger: 2, // Còn <= 2 bình máu -> Đi nạp bình máu
+    autoShopHpPotionTrigger: 10, // Còn <= 10 bình máu -> Đi nạp bình máu
     autoShopMinPotionsToBuy: 100, // Số bình máu muốn nạp đủ (100 bình)
 
     // TÍNH NĂNG NHIỆM VỤ AUTO-QUEST (HỌC TỪ COVIET):
@@ -1632,8 +1632,9 @@
       const r = s.r || gdIt.r || 0;
       const sellPrice = gdIt.sell || 0;
 
-      if (s.id.startsWith('p_hp')) {
-        hpPotionCount += (s.n || 1);
+      const isHpPotion = s.id.startsWith('p_hp') || (type === 'potion' && (gdIt.heal || 0) > 0);
+      if (isHpPotion) {
+        hpPotionCount += (typeof s.n === 'number' && s.n > 0 ? s.n : 1);
       }
 
       if (isJunkItem(s, gdIt)) {
@@ -2272,7 +2273,7 @@
       return;
     }
 
-    // Phase 3: BUYING
+    // Phase 3: BUYING - ĐẾM CHÍNH XÁC SỐ BÌNH MÁU TRONG TÚI ĐỂ NẠP ĐỦ TARGET
     if (autoShopState.phase === 'BUYING') {
       stopMoving();
       const curGold = window.GAME?.self?.gold || 0;
@@ -2282,37 +2283,50 @@
       const shopItems = shopNpcData?.shop || autoShopState.shopNpc?.shop || [];
       
       let bestPotion = null;
-      for (const pid of ['p_hp5', 'p_hp4', 'p_hp3', 'p_hp2', 'p_hp1']) {
+      for (const pid of ['p_hp4', 'p_hp3', 'p_hp2', 'p_hp1']) {
         if (shopItems.includes(pid)) {
           bestPotion = pid;
           break;
         }
       }
+      if (!bestPotion) bestPotion = 'p_hp1';
 
-      const potionPrice = GD.items?.[bestPotion]?.price || 30;
+      const potionPrice = GD.items?.[bestPotion]?.price || (bestPotion === 'p_hp1' ? 8 : (bestPotion === 'p_hp2' ? 30 : 60));
       const currentPotions = invInfo.hpPotionCount;
-      const needCount = cfg.autoShopMinPotionsToBuy - (currentPotions + autoShopState.boughtPotionsCount);
+      const targetPotions = cfg.autoShopMinPotionsToBuy || 100;
+      const stillNeeded = targetPotions - currentPotions;
 
-      if (bestPotion && needCount > 0 && curGold >= potionPrice) {
-        if (now - autoShopState.lastActionTime >= 80) {
-          const batch = Math.min(8, needCount, Math.floor(curGold / potionPrice));
+      // Kiểm tra xem túi còn có thể nhét thêm bình máu hay không (ô trống hoặc stack chưa đầy 50)
+      const maxStack = GD.items?.[bestPotion]?.stack || 50;
+      const hasSlotForPotion = invInfo.freeSlots > 0 || (window.GAME?.self?.inv || []).some(s => s && s.id === bestPotion && (s.n || 1) < maxStack);
+
+      if (stillNeeded <= 0) {
+        logShopEvent(`✅ Đã đếm đủ ${currentPotions}/${targetPotions} bình máu trong túi! Chuẩn bị quay lại bãi farm.`);
+      } else if (curGold < potionPrice) {
+        logShopEvent(`⚠️ Hết vàng mua thêm máu (Đang có ${currentPotions}/${targetPotions} bình, còn ${curGold} vàng). Chuẩn bị quay lại bãi farm.`);
+      } else if (!hasSlotForPotion) {
+        logShopEvent(`⚠️ Túi đồ đã đầy không thể chứa thêm bình máu (Đang có ${currentPotions}/${targetPotions} bình). Chuẩn bị quay lại bãi farm.`);
+      } else {
+        // CÒN THIẾU VÀ CÒN ĐỦ ĐIỀU KIỆN MUA:
+        if (now - autoShopState.lastActionTime >= 120) {
+          const maxCanAfford = Math.floor(curGold / potionPrice);
+          const batch = Math.min(6, stillNeeded, maxCanAfford);
+
           for (let b = 0; b < batch; b++) {
             window.GAME.net.send({ t: 'buy', s: autoShopState.shopNpc.npcId, m: bestPotion });
             autoShopState.boughtPotionsCount++;
             devState.totalPotionsBought++;
           }
           autoShopState.lastActionTime = now;
+
           const potName = GD.items[bestPotion]?.name || bestPotion;
-          const totalEstimated = currentPotions + autoShopState.boughtPotionsCount;
-          autoShopState.statusText = `🧪 Nạp ${potName}: ${Math.min(cfg.autoShopMinPotionsToBuy, totalEstimated)}/${cfg.autoShopMinPotionsToBuy} bình`;
+          autoShopState.statusText = `🧪 Đang nạp ${potName}: Đã đếm ${currentPotions}/${targetPotions} bình (Còn thiếu ${stillNeeded} bình)`;
           if (statusTxt) statusTxt.textContent = autoShopState.statusText;
         }
         return;
       }
 
-      // Đã mua đủ hoặc hết tiền -> Quay về bãi farm
-      logShopEvent(`🧪 Đã nạp ${autoShopState.boughtPotionsCount} bình máu (Tổng: ${invInfo.hpPotionCount} bình)! Chuẩn bị quay lại bãi farm.`);
-
+      // Đã mua đủ hoặc hết điều kiện -> Quay về bãi farm
       const returnRoute = safeMapRoute(curZone, autoShopState.farmZone);
       if (returnRoute !== null) {
         autoShopState.routeToFarm = returnRoute;
@@ -2560,11 +2574,18 @@
           <div style="background: rgba(28, 22, 13, 0.9); border: 1px solid rgba(255,179,0,0.4); border-radius: 8px; padding: 7px 9px; display: flex; flex-direction: column; gap: 5px;">
             <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; color: #ffe082; font-size: 10.5px; font-weight: bold; user-select: none;">
               <input type="checkbox" id="sm-toggle-autoshop" ${cfg.autoShop ? 'checked' : ''} style="cursor: pointer; width: 13px; height: 13px;">
-              <span>🛒 Tự Bán Đồ & Nạp 100 Bình Máu</span>
+              <span>🛒 Tự Bán Đồ & Nạp Bình Máu</span>
             </label>
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 9.5px; color: #ffe082;">
+              <span>Mục tiêu nạp đủ trong túi:</span>
+              <div style="display: flex; align-items: center; gap: 4px;">
+                <input id="sm-potions-target" type="number" min="10" max="300" value="${cfg.autoShopMinPotionsToBuy || 100}" style="width: 50px; background: rgba(0,0,0,0.6); border: 1px solid #ffb300; border-radius: 4px; color: #fff; padding: 2px 4px; font-size: 10px; text-align: right;" />
+                <span>bình</span>
+              </div>
+            </div>
             <div style="font-size: 9.5px; color: #b0bec5; line-height: 1.4;">
               Trạng thái: <b id="sm-shop-status" style="color: #ffd54f;">Sẵn sàng</b><br>
-              Đã bán: <b id="sm-trash-sold" style="color: #69f0ae;">0</b> món | Đã mua: <b id="sm-potions-bought" style="color: #40c4ff;">0</b>/100 bình
+              Trong túi: <b id="sm-potions-in-bag" style="color: #69f0ae;">0</b>/<span id="sm-potions-target-label">${cfg.autoShopMinPotionsToBuy || 100}</span> bình | Đã mua: <b id="sm-potions-bought" style="color: #40c4ff;">0</b> bình
             </div>
             <button id="sm-btn-force-shop" style="width: 100%; background: linear-gradient(135deg, #e65100, #ff9800); border: none; border-radius: 5px; padding: 5px; color: #fff; font-weight: bold; font-size: 10px; cursor: pointer; margin-top: 2px;">
               🏃 Đi Bán Rác & Nạp Máu Ngay
@@ -2792,6 +2813,21 @@
   const selKeepRarity = botPanel.querySelector('#sm-sel-keep-rarity');
   const inputKeepLv = botPanel.querySelector('#sm-input-keep-lv');
   const chkSellMats = botPanel.querySelector('#sm-chk-sell-mats');
+
+  const inputPotionsTarget = botPanel.querySelector('#sm-potions-target');
+  const lblPotionsTarget = botPanel.querySelector('#sm-potions-target-label');
+  const elPotionsInBag = botPanel.querySelector('#sm-potions-in-bag');
+
+  if (inputPotionsTarget) {
+    inputPotionsTarget.onchange = e => {
+      const v = parseInt(e.target.value, 10);
+      if (!isNaN(v) && v > 0) {
+        cfg.autoShopMinPotionsToBuy = v;
+        if (lblPotionsTarget) lblPotionsTarget.textContent = v;
+        logShopEvent(`Đã cập nhật mục tiêu nạp bình máu: ${v} bình.`);
+      }
+    };
+  }
 
   if (chkAutoShop) {
     chkAutoShop.onchange = e => {
@@ -3526,6 +3562,7 @@
     // =======================================================================
     if (elTrashSold) elTrashSold.textContent = devState.totalTrashSold;
     if (elPotionsBought) elPotionsBought.textContent = devState.totalPotionsBought;
+    if (elPotionsInBag) elPotionsInBag.textContent = invInfo.hpPotionCount;
 
     // Cập nhật thông tin Role & Tầm đánh theo thời gian thực:
     if (badgeCombatRole && (!badgeCombatRole._lastUpdated || (now - badgeCombatRole._lastUpdated >= 1200))) {

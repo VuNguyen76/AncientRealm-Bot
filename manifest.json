@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Ancient Realm - Master Bot v15.5 (Triệt Tiêu Quái 0/1 Máu & Khôi Phục Di Chuyển v15.1)",
-  "version": "15.5.0",
-  "description": "Triệt tiêu quái 0 máu và 1 máu, chuẩn hóa môn phái & Role cận chiến / đánh xa với nút bấm 1 chạm trên Mini HUD, khôi phục chuẩn di chuyển keep_range v15.1.",
+  "name": "Ancient Realm - Master Bot v15.6 (Đếm Chuẩn Bình Máu & Nạp Đủ 100 Bình)",
+  "version": "15.6.0",
+  "description": "Đếm chính xác từng bình máu trong túi, nạp đủ 100 bình không dừng ở 20 bình, triệt tiêu quái 0/1 máu, chuẩn hóa Role cận chiến/đánh xa.",
   "author": "Antigravity",
   "icons": {
     "48": "icon48.png",
