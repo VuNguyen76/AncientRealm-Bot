@@ -44,20 +44,25 @@
   window.__ancientMasterBotPolling = true;
 
   function boot() {
-    const g = window.GAME;
-    if (!g || !g.net || !g.me || !g.self) {
-      setTimeout(boot, 400);
-      return;
+    try {
+      const g = window.GAME;
+      if (!g || !g.net || !g.me || !g.self) {
+        setTimeout(boot, 400);
+        return;
+      }
+      window.__ancientMasterBotPolling = false;
+      runBotEngine();
+    } catch(err) {
+      console.error("[BOT BOOT ERROR]", err);
+      setTimeout(boot, 1000);
     }
-    window.__ancientMasterBotPolling = false;
-    runBotEngine();
   }
 
   boot();
 
   function runBotEngine() {
     if (window._ancientMasterBot) window._ancientMasterBot.destroy();
-    const oldPanels = document.querySelectorAll('[id^="ancient-master-bot"], #sm-mini-badge, #ancient-floating-chat, #ancient-chat-bubble');
+    const oldPanels = document.querySelectorAll('[id^="ancient-master-bot"], #sm-mini-badge, #sm-fab-toggle, #ancient-floating-chat, #ancient-chat-bubble');
     oldPanels.forEach(p => p.remove());
 
     const MOB_BASE = 1_000_000;
@@ -817,6 +822,7 @@
   // BỘ TIỆN ÍCH KÉO THẢ MƯỢT MÀ (UNIVERSAL DRAGGABLE COMPONENT)
   // =========================================================================
   function makeDraggable(element, handle, storageKey) {
+    if (!element || !handle) return;
     let isDragging = false;
     let startX = 0, startY = 0;
     let initialLeft = 0, initialTop = 0;
@@ -826,12 +832,16 @@
       try {
         const saved = JSON.parse(localStorage.getItem(storageKey));
         if (saved && typeof saved.x === 'number' && typeof saved.y === 'number') {
-          const maxX = Math.max(0, window.innerWidth - (element.offsetWidth || 280));
-          const maxY = Math.max(0, window.innerHeight - (element.offsetHeight || 60));
-          element.style.left = Math.min(maxX, Math.max(0, saved.x)) + 'px';
-          element.style.top = Math.min(maxY, Math.max(0, saved.y)) + 'px';
-          element.style.right = 'auto';
-          element.style.bottom = 'auto';
+          const w = element.offsetWidth || 180;
+          const h = element.offsetHeight || 40;
+          if (saved.x >= 0 && saved.x <= window.innerWidth - 30 && saved.y >= 0 && saved.y <= window.innerHeight - 30) {
+            const maxX = Math.max(0, window.innerWidth - w);
+            const maxY = Math.max(0, window.innerHeight - h);
+            element.style.left = Math.min(maxX, Math.max(0, saved.x)) + 'px';
+            element.style.top = Math.min(maxY, Math.max(0, saved.y)) + 'px';
+            element.style.right = 'auto';
+            element.style.bottom = 'auto';
+          }
         }
       } catch (e) {}
     }
@@ -1464,7 +1474,7 @@
   const botMiniBadge = document.createElement('div');
   botMiniBadge.id = 'sm-mini-badge';
   botMiniBadge.innerHTML = `
-    <div style="position: fixed; top: 15px; right: 15px; background: rgba(14, 20, 28, 0.9); border: 1.5px solid #00e676;
+    <div style="position: fixed; top: 65px; right: 15px; background: rgba(14, 20, 28, 0.9); border: 1.5px solid #00e676;
                 border-radius: 20px; padding: 4px 12px; color: #fff; font-family: 'Segoe UI', Tahoma, sans-serif;
                 font-size: 11px; z-index: 999999; box-shadow: 0 4px 16px rgba(0,0,0,0.6); backdrop-filter: blur(8px);
                 display: none; align-items: center; gap: 8px; cursor: grab; user-select: none;">
@@ -1477,10 +1487,51 @@
   `;
   document.body.appendChild(botMiniBadge);
 
+  // Nút Nổi Thông Minh (FAB) - Luôn hiển thị trên màn hình điện thoại ở vị trí an toàn
+  const botFab = document.createElement('div');
+  botFab.id = 'sm-fab-toggle';
+  botFab.innerHTML = `
+    <div style="position: fixed; top: 75px; left: 15px; width: 42px; height: 42px; background: linear-gradient(135deg, #1b5e20, #00e676);
+                border: 2px solid #fff; border-radius: 50%; box-shadow: 0 4px 18px rgba(0,230,118,0.85); z-index: 1000000;
+                display: flex; align-items: center; justify-content: center; cursor: pointer; user-select: none;
+                font-size: 22px; transition: transform 0.15s ease;" title="Bật/Tắt Bảng Bot Cổ Giới">
+      🤖
+    </div>
+  `;
+  document.body.appendChild(botFab);
+
   const botPanelEl = botPanel.firstElementChild;
   const botMiniEl = botMiniBadge.firstElementChild;
+  const botFabEl = botFab.firstElementChild;
+
   makeDraggable(botPanelEl, botPanel.querySelector('#sm-header'), 'ancient_bot_panel_pos');
   makeDraggable(botMiniEl, botMiniEl, 'ancient_bot_mini_pos');
+  makeDraggable(botFabEl, botFabEl, 'ancient_bot_fab_pos');
+
+  function toggleBotPanel() {
+    if (botPanelEl.style.display === 'none') {
+      botPanelEl.style.display = 'block';
+      botMiniEl.style.display = 'none';
+    } else {
+      botPanelEl.style.display = 'none';
+      botMiniEl.style.display = 'flex';
+    }
+  }
+  botFabEl.onclick = toggleBotPanel;
+
+  // Cử chỉ chạm 2 lần vào góc trên bên trái (dưới avatar) để bật/tắt bot
+  let lastTapTime = 0;
+  window.addEventListener('touchend', (e) => {
+    const now = Date.now();
+    if (now - lastTapTime < 320) {
+      if (e.target.closest('#ancient-master-bot-v13, #sm-mini-badge, #sm-fab-toggle, #ancient-floating-chat, #afc-bubble')) return;
+      const touch = e.changedTouches?.[0];
+      if (touch && touch.clientX < 150 && touch.clientY < 150) {
+        toggleBotPanel();
+      }
+    }
+    lastTapTime = now;
+  });
 
   // Sync to APK handler
   const btnSyncApk = botPanel.querySelector('#sm-btn-sync-apk');
@@ -1514,7 +1565,6 @@
       triggerShopTrip(true);
     };
   }
-
 
   // Toggle thu gọn bot panel
   const btnMinBot = botPanel.querySelector('#sm-btn-min');
