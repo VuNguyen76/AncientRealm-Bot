@@ -41,6 +41,15 @@
     return;
   }
 
+  // 0. HOT-PATCH CHỐNG CRASH GAME GỐC (main.js:884 Cannot read properties of null reading 'joined')
+  // Lỗi xảy ra khi bật "Tự đánh" trong cài đặt game trước khi đăng nhập vào nhân vật
+  try {
+    if (localStorage.getItem('dainam_autofight') === '1') {
+      localStorage.setItem('dainam_autofight', '0');
+      console.log("%c[BOT ENGINE PATCH] Đã tự động tắt 'dainam_autofight' của game gốc để chống crash main.js:884!", "color: #00e676; font-weight: bold;");
+    }
+  } catch (e) {}
+
   // 2. Chế độ chờ đăng nhập tự động (Hoạt động hoàn hảo trên cả Điện thoại & PC)
   // Tuyệt đối không dùng alert() gây chặn màn hình hay lỗi font chữ!
   if (window.__ancientMasterBotPolling) return;
