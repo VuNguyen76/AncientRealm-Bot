@@ -1,4 +1,4 @@
-// AncientRealm Online - Master Bot v13.9 (Anti-Pin, Aggro Retaliation & Roadblock Clear)
+// AncientRealm Online - Master Bot v14.0 (Anti-Pin, Aggro Retaliation & Roadblock Clear)
 // ĐÁP ỨNG CHÍNH XÁC 100% YÊU CẦU CỦA SẾP:
 // 1. KHẮC PHỤC TRIỆT ĐỂ TÌNH TRẠNG "VÂY KHÔNG ĐI ĐƯỢC" (BỊ ÉP VÀO GỐC CÂY / VÁCH ĐÁ):
 //    - Vector Đẩy Lùi Vật Thể Tĩnh (Static Obstacle Repulsion):
@@ -202,13 +202,28 @@
     castGateMinImpactTime: 450,
     autoPotion: true,
 
-    // Auto-Shop & Return to Farm Settings (v13.9)
+    // Auto-Shop & Return to Farm Settings (v14.0)
     autoShop: true,
     autoShopSameMapOnly: false, // Tùy chọn giữ bãi: Chỉ bán khi có Shop cùng map, không nhảy cổng
     autoShopMaxHops: 3, // Giới hạn số cổng tối đa được phép đi (tránh đi lang thang)
     autoShopFreeSlotTrigger: 1, // Hành trang còn <= 1 ô trống -> Đi bán rác & nguyên liệu
     autoShopHpPotionTrigger: 2, // Còn <= 2 bình máu -> Đi nạp bình máu
-    autoShopMinPotionsToBuy: 100 // Số bình máu muốn nạp đủ (100 bình)
+    autoShopMinPotionsToBuy: 100, // Số bình máu muốn nạp đủ (100 bình)
+
+    // TÍNH NĂNG NHIỆM VỤ AUTO-QUEST (HỌC TỪ COVIET):
+    autoQuest: false,
+    questDoSide: true,
+    questDoDaily: false,
+
+    // BỘ LỌC CHỌN ĐỒ BÁN NÂNG CAO (HỌC TỪ COVIET):
+    autoSell: true,
+    keepRarity: 2, // 0: Giữ hết, 1: Giữ từ Xanh lá, 2: Giữ từ Xanh lam, 3: Giữ từ Tím, 4: Giữ từ Cam
+    keepLevel: 1, // Giữ trang bị từ cấp này trở lên
+    sellTypes: ['weapon', 'armor', 'helmet', 'cape', 'ring'], // Các loại trang bị được bán
+    sellMats: true, // Bán nguyên liệu quái rơi rác
+
+    // TỰ ĐỘNG CẤT ĐỒ VÀO KHO / ĐẶT CỌC KHO (HỌC TỪ COVIET):
+    autoStore: false // Tự động cất trang bị quý vào kho Thủ Kho khi túi đầy
   };
 
   const devState = {
@@ -1010,7 +1025,7 @@
   // =========================================================================
 
   // =========================================================================
-  // HỆ THỐNG TỰ ĐỘNG BÁN ĐỒ RÁC & NẠP BÌNH MÁU TOÀN CẦU (v13.9 DYNAMIC ZERO-HARDCODE)
+  // HỆ THỐNG TỰ ĐỘNG BÁN ĐỒ RÁC & NẠP BÌNH MÁU TOÀN CẦU (v14.0 DYNAMIC ZERO-HARDCODE)
   // =========================================================================
 
   function getAllShopsFromGD() {
@@ -1117,12 +1132,51 @@
     return bestShop;
   }
 
+  // =========================================================================
+  // BỘ QUẢN LÝ TÚI ĐỒ & BỘ LỌC BÁN / CẤT KHO THÔNG MINH (HỌC TỪ COVIET)
+  // =========================================================================
+  const EQUIP_TYPES = new Set(['weapon', 'armor', 'helmet', 'cape', 'ring']);
+
+  function isJunkItem(s, gdIt) {
+    if (!s || !s.id) return false;
+    const type = gdIt.type || s.type;
+    const r = s.r || gdIt.r || 0;
+    const lv = gdIt.lv || s.lv || 1;
+    const sellPrice = gdIt.sell || 0;
+    if (sellPrice <= 0) return false;
+
+    // NGUYÊN TẮC BẢO VỆ TUYỆT ĐỐI:
+    if (type === 'quest' || s.id.startsWith('q_')) return false; // Đồ nhiệm vụ
+    if (type === 'potion' || s.id.startsWith('p_')) return false; // Bình máu/mana
+    if (type === 'seal' || s.id.startsWith('seal_') || s.id.includes('an_') || s.id.includes('ngoc_')) return false; // Ấn, ngọc quý
+
+    // Nguyên liệu quái rơi rác:
+    if (type === 'mat') return !!cfg.sellMats;
+
+    // Trang bị: Bán nếu thuộc loại được chọn VÀ (phẩm chất < mức giữ HOẶC cấp < mức giữ)
+    if (EQUIP_TYPES.has(type) && cfg.sellTypes.includes(type)) {
+      return (r < cfg.keepRarity) || (lv < cfg.keepLevel);
+    }
+    return false;
+  }
+
+  function isKeeperItem(s, gdIt) {
+    if (!s || !s.id) return false;
+    const type = gdIt.type || s.type;
+    if (!EQUIP_TYPES.has(type)) return false;
+    const r = s.r || gdIt.r || 0;
+    const lv = gdIt.lv || s.lv || 1;
+    // Trang bị quý đạt chuẩn giữ lại (phẩm chất VÀ cấp đều >= mức giữ):
+    return (r >= cfg.keepRarity) && (lv >= cfg.keepLevel);
+  }
+
   function inspectInventory() {
     const inv = window.GAME?.self?.inv || [];
     const GD = window.GAME?.GD || {};
     let freeSlots = 0;
     let hpPotionCount = 0;
     const sellableSlots = [];
+    const keeperSlots = [];
 
     for (let i = 0; i < inv.length; i++) {
       const s = inv[i];
@@ -1139,29 +1193,442 @@
         hpPotionCount += (s.n || 1);
       }
 
-      // NGUYÊN TẮC BẢO VỆ TUYỆT ĐỐI (STRICT NEVER SELL):
-      // 1. Đồ nhiệm vụ, chìa khóa, ngọc phù
-      if (type === 'quest' || s.id.startsWith('q_')) continue;
-      // 2. Bình thuốc máu, mana
-      if (type === 'potion' || s.id.startsWith('p_')) continue;
-      // 3. Đồ Cam / Tím quý hiếm (r >= 3)
-      if (r >= 3) continue;
-      // 4. Không có giá bán
-      if (sellPrice <= 0) continue;
-
-      // ĐỦ ĐIỀU KIỆN BÁN (Nguyên liệu rơi mat & Trang bị rác r < 3):
-      sellableSlots.push({
-        slot: i,
-        id: s.id,
-        name: gdIt.name || s.id,
-        n: s.n || 1,
-        r,
-        type,
-        price: Math.round(sellPrice * (s.n || 1) * ([1, 1.2, 1.5, 2, 3][r] || 1))
-      });
+      if (isJunkItem(s, gdIt)) {
+        sellableSlots.push({
+          slot: i,
+          id: s.id,
+          name: gdIt.name || s.id,
+          n: s.n || 1,
+          r,
+          type,
+          price: Math.round(sellPrice * (s.n || 1) * ([1, 1.2, 1.5, 2, 3][r] || 1))
+        });
+      } else if (isKeeperItem(s, gdIt)) {
+        keeperSlots.push({
+          slot: i,
+          id: s.id,
+          name: gdIt.name || s.id,
+          r,
+          lv: gdIt.lv || 1
+        });
+      }
     }
 
-    return { freeSlots, hpPotionCount, sellableSlots };
+    return { freeSlots, hpPotionCount, sellableSlots, keeperSlots };
+  }
+
+  // =========================================================================
+  // BỘ TỰ ĐỘNG CẤT ĐỒ VÀO KHO / ĐẶT CỌC KHO (AUTO STORAGE DEPOSIT - HỌC TỪ COVIET)
+  // =========================================================================
+  const storageState = {
+    active: false,
+    phase: 'IDLE', // TRAVEL_TO_STORAGE, DEPOSITING, TRAVEL_TO_FARM
+    storageNpc: null,
+    farmZone: null,
+    farmPos: null,
+    farmTargetMob: null,
+    routeToStorage: [],
+    storedCount: 0,
+    statusText: '',
+    lastActionTime: 0
+  };
+
+  function findNearestStorageNpc(curZone) {
+    const localNpc = window.GAME?.world?.zone?.npcs?.find(n => n.storage || n.id === 'thukho' || n.name?.includes('Kho'));
+    if (localNpc) return { ...localNpc, zone: curZone, hops: 0, route: [] };
+
+    const GD = window.GAME?.GD || {};
+    const zones = GD.zones?.zones || GD.zones || {};
+    for (const [zid, z] of Object.entries(zones)) {
+      const n = (z.npcs || []).find(x => x.storage || x.id === 'thukho');
+      if (n) {
+        const r = safeMapRoute(curZone, zid);
+        if (r) return { ...n, zone: zid, hops: r.length, route: r };
+      }
+    }
+    const r = safeMapRoute(curZone, 'lang');
+    return { id: 'thukho', name: 'Thủ Kho', zone: 'lang', x: 600, y: 600, hops: r?.length || 1, route: r || [] };
+  }
+
+  function triggerStorageTrip(force = false) {
+    if (storageState.active && !force) return;
+    const curZone = window.GAME?.world?.zone?.id;
+    if (!curZone) return;
+    const me = window.GAME?.me;
+    if (!me) return;
+
+    const storageNpc = findNearestStorageNpc(curZone);
+    if (!storageNpc) {
+      logShopEvent('⚠️ Không tìm thấy NPC Thủ Kho.');
+      return;
+    }
+
+    storageState.active = true;
+    storageState.phase = 'TRAVEL_TO_STORAGE';
+    storageState.farmZone = curZone;
+    storageState.farmPos = { x: Math.round(me.x), y: Math.round(me.y) };
+    storageState.farmTargetMob = cfg.targetMob;
+    storageState.storageNpc = storageNpc;
+    storageState.routeToStorage = storageNpc.route || [];
+    storageState.storedCount = 0;
+    storageState.statusText = `📦 Đi tới ${storageNpc.name} (${storageNpc.zone}) cất đồ quý...`;
+    logShopEvent(`📦 Bắt đầu chuyến đi cất đồ quý vào kho tại ${storageNpc.name} (${storageNpc.zone}).`);
+  }
+
+  function handleStorageStep(me, now, keeperSlots) {
+    const curZone = window.GAME?.world?.zone?.id;
+    if (!curZone) return;
+
+    if (storageState.phase === 'TRAVEL_TO_STORAGE') {
+      if (curZone === storageState.storageNpc.zone) {
+        const npcX = storageState.storageNpc.x;
+        const npcY = storageState.storageNpc.y;
+        const distNpc = Math.hypot(npcX - me.x, npcY - me.y);
+
+        if (distNpc <= 110) {
+          stopMoving();
+          storageState.phase = 'DEPOSITING';
+          storageState.statusText = `📦 Đã tới ${storageState.storageNpc.name}. Đang cất đồ vào kho...`;
+          if (statusTxt) statusTxt.textContent = storageState.statusText;
+          return;
+        }
+
+        const steer = calculateDirectSteering(me, npcX, npcY);
+        setSteeringVector(steer.dx, steer.dy);
+        storageState.statusText = `📦 Tiếp cận ${storageState.storageNpc.name} (${Math.round(distNpc)}px)`;
+        if (statusTxt) statusTxt.textContent = storageState.statusText;
+        return;
+      }
+
+      const curRoute = safeMapRoute(curZone, storageState.storageNpc.zone);
+      if (!curRoute || curRoute.length === 0) {
+        logShopEvent(`⚠️ Mất dấu đường tới Thủ Kho từ map ${curZone}! Hủy cất đồ.`);
+        storageState.active = false;
+        return;
+      }
+
+      const step = curRoute[0];
+      const pX = step.portal.x, pY = step.portal.y;
+      const distPortal = Math.hypot(pX - me.x, pY - me.y);
+      if (distPortal <= 45 && now - lastZoneTransitionTime >= 2500) {
+        setSteeringVector(pX - me.x, pY - me.y);
+        storageState.statusText = `🚪 Bước qua cổng sang ${step.to}...`;
+      } else {
+        const steer = calculateDirectSteering(me, pX, pY);
+        setSteeringVector(steer.dx, steer.dy);
+        storageState.statusText = `📦 Đi tới cổng sang ${step.to} (${Math.round(distPortal)}px)`;
+      }
+      if (statusTxt) statusTxt.textContent = storageState.statusText;
+      return;
+    }
+
+    if (storageState.phase === 'DEPOSITING') {
+      stopMoving();
+      if (keeperSlots.length > 0) {
+        if (now - storageState.lastActionTime >= 350) {
+          const item = keeperSlots[0];
+          window.GAME.net.send({ t: 'npc', s: storageState.storageNpc.id });
+          setTimeout(() => {
+            window.GAME.net.send({ t: 'dep', s: storageState.storageNpc.id, n: item.slot });
+          }, 150);
+          storageState.lastActionTime = now;
+          storageState.storedCount++;
+          storageState.statusText = `📦 Đang cất vào kho: ${item.name}`;
+          if (statusTxt) statusTxt.textContent = storageState.statusText;
+        }
+        return;
+      }
+
+      // Đã cất hết -> Chuyển sang quay về bãi farm hoặc đi bán đồ nếu có rác
+      logShopEvent(`📦 Đã cất xong ${storageState.storedCount} trang bị quý vào kho!`);
+      const returnRoute = safeMapRoute(curZone, storageState.farmZone);
+      if (returnRoute && returnRoute.length > 0) {
+        storageState.phase = 'TRAVEL_TO_FARM';
+        storageState.statusText = `📦 Đang quay lại bãi farm (${storageState.farmZone})...`;
+        if (statusTxt) statusTxt.textContent = storageState.statusText;
+      } else {
+        storageState.active = false;
+        storageState.phase = 'IDLE';
+      }
+      return;
+    }
+
+    if (storageState.phase === 'TRAVEL_TO_FARM') {
+      if (curZone === storageState.farmZone) {
+        if (storageState.farmTargetMob && cfg.targetMob !== storageState.farmTargetMob) {
+          cfg.targetMob = storageState.farmTargetMob;
+        }
+        const farmX = storageState.farmPos.x, farmY = storageState.farmPos.y;
+        const distFarm = Math.hypot(farmX - me.x, farmY - me.y);
+        if (distFarm <= 80) {
+          stopMoving();
+          storageState.active = false;
+          storageState.phase = 'IDLE';
+          logShopEvent(`✅ Đã về lại đúng bãi farm ban đầu! Tiếp tục cày.`);
+          return;
+        }
+        const steer = calculateDirectSteering(me, farmX, farmY);
+        setSteeringVector(steer.dx, steer.dy);
+        storageState.statusText = `🧭 Về lại bãi farm (${Math.round(distFarm)}px)`;
+        if (statusTxt) statusTxt.textContent = storageState.statusText;
+        return;
+      }
+
+      const curReturnRoute = safeMapRoute(curZone, storageState.farmZone);
+      if (!curReturnRoute || curReturnRoute.length === 0) {
+        storageState.active = false;
+        return;
+      }
+      const step = curReturnRoute[0];
+      const pX = step.portal.x, pY = step.portal.y;
+      const distPortal = Math.hypot(pX - me.x, pY - me.y);
+      if (distPortal <= 45 && now - lastZoneTransitionTime >= 2500) {
+        setSteeringVector(pX - me.x, pY - me.y);
+      } else {
+        const steer = calculateDirectSteering(me, pX, pY);
+        setSteeringVector(steer.dx, steer.dy);
+      }
+      storageState.statusText = `🚪 Về bãi farm: Cổng sang ${step.to} (${Math.round(distPortal)}px)`;
+      if (statusTxt) statusTxt.textContent = storageState.statusText;
+    }
+  }
+
+  // =========================================================================
+  // BỘ TỰ ĐỘNG LÀM NHIỆM VỤ AUTO-QUEST ENGINE (HỌC TỪ COVIET)
+  // =========================================================================
+  const questState = {
+    active: false,
+    currentQuest: null,
+    targetMob: null,
+    collectItem: null,
+    lastTalkTime: 0,
+    statusText: '',
+    talkTries: 0
+  };
+
+  function getActiveQuest() {
+    const ui = window.GAME?.ui;
+    const self = window.GAME?.self;
+    if (ui?.guideQuest) {
+      const gq = ui.guideQuest();
+      if (gq && !gq.done) return gq;
+    }
+    const list = self?.quests?.list || [];
+    const active = list.find(q => !q.done);
+    if (active) return active;
+    if (self?.quest && !self.quest.done) return self.quest;
+    return null;
+  }
+
+  function getQuestDef(questId) {
+    return window.GAME?.GD?.quests?.[questId] || null;
+  }
+
+  function mobsDroppingItem(itemId) {
+    const GD = window.GAME?.GD || {};
+    const mobs = GD.mobs || {};
+    const loot = GD.loot || {};
+    const result = [];
+    for (const [mid, m] of Object.entries(mobs)) {
+      const l = loot[m.loot];
+      if (l && l.items && l.items.includes(itemId)) {
+        result.push(mid);
+      }
+    }
+    return result;
+  }
+
+  function findZoneForMobs(mobList, preferZone) {
+    const GD = window.GAME?.GD || {};
+    const zones = GD.zones?.zones || GD.zones || {};
+    const hasMob = zid => {
+      const z = zones[zid];
+      return z?.spawns && z.spawns.some(s => mobList.includes(s.mob));
+    };
+    if (preferZone && hasMob(preferZone)) return preferZone;
+    for (const zid of Object.keys(zones)) {
+      if (hasMob(zid)) return zid;
+    }
+    return null;
+  }
+
+  function findNpcZoneAndLocation(npcId) {
+    const GD = window.GAME?.GD || {};
+    const zones = GD.zones?.zones || GD.zones || {};
+    for (const [zid, z] of Object.entries(zones)) {
+      const n = (z.npcs || []).find(x => x.id === npcId);
+      if (n) return { ...n, zone: zid };
+    }
+    return null;
+  }
+
+  function handleAutoQuest(me, now) {
+    if (!cfg.autoQuest) return false;
+    const curZone = window.GAME?.world?.zone?.id;
+    if (!curZone) return false;
+
+    const q = getActiveQuest();
+    if (!q) {
+      const offers = window.GAME?.self?.quests?.offers || [];
+      if (offers.length > 0) {
+        const offerNpcId = offers[0];
+        const npcLoc = findNpcZoneAndLocation(offerNpcId);
+        if (npcLoc) {
+          if (curZone !== npcLoc.zone) {
+            const r = safeMapRoute(curZone, npcLoc.zone);
+            if (r && r.length > 0) {
+              const p = r[0].portal;
+              const distP = Math.hypot(p.x - me.x, p.y - me.y);
+              if (distP <= 45 && now - lastZoneTransitionTime >= 2500) {
+                setSteeringVector(p.x - me.x, p.y - me.y);
+              } else {
+                const s = calculateDirectSteering(me, p.x, p.y);
+                setSteeringVector(s.dx, s.dy);
+              }
+              questState.statusText = `📜 Đi sang ${npcLoc.zone} nhận quest...`;
+              if (statusTxt) statusTxt.textContent = questState.statusText;
+              return true;
+            }
+          } else {
+            const distNpc = Math.hypot(npcLoc.x - me.x, npcLoc.y - me.y);
+            if (distNpc <= 110) {
+              stopMoving();
+              if (now - questState.lastTalkTime >= 1500) {
+                questState.lastTalkTime = now;
+                window.GAME.net.send({ t: 'npc', s: offerNpcId });
+                setTimeout(() => {
+                  window.GAME.net.send({ t: 'acc', s: offerNpcId, m: '' });
+                }, 400);
+              }
+              questState.statusText = `📜 Nhận nhiệm vụ từ ${npcLoc.name || offerNpcId}...`;
+              if (statusTxt) statusTxt.textContent = questState.statusText;
+              return true;
+            } else {
+              const s = calculateDirectSteering(me, npcLoc.x, npcLoc.y);
+              setSteeringVector(s.dx, s.dy);
+              questState.statusText = `📜 Tới gặp ${npcLoc.name || offerNpcId} (${Math.round(distNpc)}px)`;
+              if (statusTxt) statusTxt.textContent = questState.statusText;
+              return true;
+            }
+          }
+        }
+      }
+      return false;
+    }
+
+    const def = getQuestDef(q.id);
+    const step = def?.steps?.[q.step];
+    if (!step) return false;
+
+    // A. BƯỚC NÓI CHUYỆN HOẶC ĐÃ XONG ĐANG TRẢ NHIỆM VỤ (q.ready)
+    if (step.type === 'talk' || q.ready) {
+      const targetNpcId = q.npc || step.npc;
+      const npcLoc = findNpcZoneAndLocation(targetNpcId);
+      if (npcLoc) {
+        if (curZone !== npcLoc.zone) {
+          const r = safeMapRoute(curZone, npcLoc.zone);
+          if (r && r.length > 0) {
+            const p = r[0].portal;
+            const distP = Math.hypot(p.x - me.x, p.y - me.y);
+            if (distP <= 45 && now - lastZoneTransitionTime >= 2500) {
+              setSteeringVector(p.x - me.x, p.y - me.y);
+            } else {
+              const s = calculateDirectSteering(me, p.x, p.y);
+              setSteeringVector(s.dx, s.dy);
+            }
+            questState.statusText = `📜 Đi sang ${npcLoc.zone} trả quest...`;
+            if (statusTxt) statusTxt.textContent = questState.statusText;
+            return true;
+          }
+        } else {
+          const distNpc = Math.hypot(npcLoc.x - me.x, npcLoc.y - me.y);
+          if (distNpc <= 110) {
+            stopMoving();
+            if (now - questState.lastTalkTime >= 1500) {
+              questState.lastTalkTime = now;
+              window.GAME.net.send({ t: 'npc', s: targetNpcId });
+              setTimeout(() => {
+                window.GAME.net.send({ t: 'qa', s: targetNpcId, m: q.id });
+                logShopEvent(`✅ Đã trả nhiệm vụ [${def.name || q.id}] cho ${npcLoc.name || targetNpcId}!`);
+              }, 400);
+            }
+            questState.statusText = `📜 Đang trả nhiệm vụ cho ${npcLoc.name || targetNpcId}...`;
+            if (statusTxt) statusTxt.textContent = questState.statusText;
+            return true;
+          } else {
+            const s = calculateDirectSteering(me, npcLoc.x, npcLoc.y);
+            setSteeringVector(s.dx, s.dy);
+            questState.statusText = `📜 Gặp ${npcLoc.name || targetNpcId} (${Math.round(distNpc)}px)`;
+            if (statusTxt) statusTxt.textContent = questState.statusText;
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+
+    // B. BƯỚC GIẾT QUÁI (kill) HOẶC THU THẬP VẬT PHẨM (collect)
+    if (step.type === 'kill' || step.type === 'collect') {
+      const mobList = step.type === 'kill' 
+        ? (step.mobs || [step.mob])
+        : (mobsDroppingItem(step.item) || [step.mob]);
+      
+      const targetMobKind = mobList[0];
+      if (targetMobKind) {
+        cfg.targetMob = targetMobKind;
+        questState.collectItem = (step.type === 'collect') ? step.item : null;
+
+        const targetZone = findZoneForMobs(mobList, curZone);
+        if (targetZone && targetZone !== curZone) {
+          const r = safeMapRoute(curZone, targetZone);
+          if (r && r.length > 0) {
+            const p = r[0].portal;
+            const distP = Math.hypot(p.x - me.x, p.y - me.y);
+            if (distP <= 45 && now - lastZoneTransitionTime >= 2500) {
+              setSteeringVector(p.x - me.x, p.y - me.y);
+            } else {
+              const s = calculateDirectSteering(me, p.x, p.y);
+              setSteeringVector(s.dx, s.dy);
+            }
+            questState.statusText = `📜 Sang ${targetZone} săn quái quest (${targetMobKind})...`;
+            if (statusTxt) statusTxt.textContent = questState.statusText;
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+
+    // C. BƯỚC TỚI NƠI (reach)
+    if (step.type === 'reach') {
+      if (step.zone && curZone !== step.zone) {
+        const r = safeMapRoute(curZone, step.zone);
+        if (r && r.length > 0) {
+          const p = r[0].portal;
+          const distP = Math.hypot(p.x - me.x, p.y - me.y);
+          if (distP <= 45 && now - lastZoneTransitionTime >= 2500) {
+            setSteeringVector(p.x - me.x, p.y - me.y);
+          } else {
+            const s = calculateDirectSteering(me, p.x, p.y);
+            setSteeringVector(s.dx, s.dy);
+          }
+          questState.statusText = `📜 Tới map ${step.zone}...`;
+          if (statusTxt) statusTxt.textContent = questState.statusText;
+          return true;
+        }
+      } else if (step.x && step.y) {
+        const distStep = Math.hypot(step.x - me.x, step.y - me.y);
+        if (distStep > 50) {
+          const s = calculateDirectSteering(me, step.x, step.y);
+          setSteeringVector(s.dx, s.dy);
+          questState.statusText = `📜 Đi tới điểm quest (${Math.round(distStep)}px)`;
+          if (statusTxt) statusTxt.textContent = questState.statusText;
+          return true;
+        }
+      }
+    }
+
+    return false;
   }
 
   function logShopEvent(msg) {
@@ -1493,11 +1960,12 @@
         </button>
       </div>
 
-      <!-- Navigation Tabs -->
-      <div id="sm-nav-tabs" style="display: flex; background: rgba(0,0,0,0.4); border-bottom: 1px solid rgba(0,230,118,0.2); padding: 4px 6px; gap: 4px;">
-        <button class="sm-tab-btn active" data-tab="combat" style="flex: 1; padding: 5px 2px; background: rgba(0,230,118,0.18); border: 1px solid #00e676; border-radius: 6px; color: #00e676; font-size: 10.5px; font-weight: bold; cursor: pointer;">⚔️ Chiến Đấu</button>
-        <button class="sm-tab-btn" data-tab="skills" style="flex: 1; padding: 5px 2px; background: rgba(255,255,255,0.05); border: 1px solid transparent; border-radius: 6px; color: #8b949e; font-size: 10.5px; font-weight: bold; cursor: pointer;">⚡ Chiêu Thức</button>
-        <button class="sm-tab-btn" data-tab="shop" style="flex: 1; padding: 5px 2px; background: rgba(255,255,255,0.05); border: 1px solid transparent; border-radius: 6px; color: #8b949e; font-size: 10.5px; font-weight: bold; cursor: pointer;">🛒 Bán & Tiện Ích</button>
+      <!-- Navigation Tabs (4 Tabs Cyberpunk) -->
+      <div id="sm-nav-tabs" style="display: flex; background: rgba(0,0,0,0.4); border-bottom: 1px solid rgba(0,230,118,0.2); padding: 4px 6px; gap: 3px;">
+        <button class="sm-tab-btn active" data-tab="combat" style="flex: 1; padding: 5px 2px; background: rgba(0,230,118,0.18); border: 1px solid #00e676; border-radius: 6px; color: #00e676; font-size: 10px; font-weight: bold; cursor: pointer;">⚔️ Cày</button>
+        <button class="sm-tab-btn" data-tab="quest" style="flex: 1; padding: 5px 2px; background: rgba(255,255,255,0.05); border: 1px solid transparent; border-radius: 6px; color: #8b949e; font-size: 10px; font-weight: bold; cursor: pointer;">📜 Q.Vụ</button>
+        <button class="sm-tab-btn" data-tab="skills" style="flex: 1; padding: 5px 2px; background: rgba(255,255,255,0.05); border: 1px solid transparent; border-radius: 6px; color: #8b949e; font-size: 10px; font-weight: bold; cursor: pointer;">⚡ Chiêu</button>
+        <button class="sm-tab-btn" data-tab="shop" style="flex: 1; padding: 5px 2px; background: rgba(255,255,255,0.05); border: 1px solid transparent; border-radius: 6px; color: #8b949e; font-size: 10px; font-weight: bold; cursor: pointer;">🛒 Bán/Kho</button>
       </div>
 
       <!-- Scrollable Tab Content Container -->
@@ -1548,7 +2016,45 @@
           </div>
         </div>
 
-        <!-- TAB 2: CHIÊU THỨC & BUILDS -->
+        <!-- TAB 2: NHIỆM VỤ AUTO-QUEST (HỌC TỪ COVIET) -->
+        <div id="sm-tab-quest" class="sm-tab-content" style="display: none; flex-direction: column; gap: 7px;">
+          <div style="background: rgba(14, 28, 38, 0.9); border: 1px solid rgba(0,229,255,0.4); border-radius: 8px; padding: 7px 9px; display: flex; flex-direction: column; gap: 5px;">
+            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; color: #80d8ff; font-size: 10.5px; font-weight: bold; user-select: none;">
+              <input type="checkbox" id="sm-toggle-autoquest" style="cursor: pointer; width: 13px; height: 13px;">
+              <span>📜 Tự Động Làm Nhiệm Vụ NPC</span>
+            </label>
+            <div style="display: flex; gap: 10px; font-size: 9.5px; color: #b0bec5; padding-left: 20px;">
+              <label style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                <input type="checkbox" id="sm-chk-quest-side" checked> Q.Phụ
+              </label>
+              <label style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                <input type="checkbox" id="sm-chk-quest-daily"> Q.Hằng Ngày
+              </label>
+            </div>
+          </div>
+
+          <div style="background: rgba(22, 27, 34, 0.9); border: 1px solid rgba(255,215,106,0.35); border-radius: 8px; padding: 7px 9px; display: flex; flex-direction: column; gap: 4px; font-size: 10px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span style="color: #ffd76a; font-weight: bold;">📜 NHIỆM VỤ ĐANG THEO DÕI:</span>
+              <span id="sm-q-status-tag" style="background: rgba(0,230,118,0.15); color: #00e676; border: 1px solid #00e676; border-radius: 4px; padding: 1px 5px; font-size: 8.5px; font-weight: bold;">SẴN SÀNG</span>
+            </div>
+            <div style="font-weight: bold; color: #fff; font-size: 11px;" id="sm-q-title">Đang quét nhiệm vụ...</div>
+            <div style="color: #90caf9;" id="sm-q-goal">Mục tiêu: Đang nạp...</div>
+            <div style="display: flex; justify-content: space-between; color: #ce93d8;">
+              <span>Tiến độ:</span>
+              <b id="sm-q-prog" style="color: #69f0ae;">0/0</b>
+            </div>
+            <div style="display: flex; justify-content: space-between; color: #ffb74d;">
+              <span>Bước tiếp theo:</span>
+              <b id="sm-q-step-desc">Đang phân tích...</b>
+            </div>
+            <button id="sm-btn-do-quest" style="width: 100%; margin-top: 3px; padding: 5px; background: linear-gradient(135deg, #0288d1, #00acc1); border: none; border-radius: 5px; color: #fff; font-weight: bold; font-size: 10px; cursor: pointer;">
+              🎯 Ưu Tiên Làm Nhiệm Vụ Này Ngay
+            </button>
+          </div>
+        </div>
+
+        <!-- TAB 3: CHIÊU THỨC & BUILDS -->
         <div id="sm-tab-skills" class="sm-tab-content" style="display: none; flex-direction: column; gap: 7px;">
           <div style="font-weight: bold; color: #80d8ff; font-size: 10.5px;">🎯 CHUYỂN BUILD 1-CHẠM:</div>
           <div style="display: flex; flex-direction: column; gap: 4px;">
@@ -1577,9 +2083,9 @@
           </div>
         </div>
 
-        <!-- TAB 3: AUTO-SHOP & TIỆN ÍCH -->
+        <!-- TAB 4: BÁN & KHO (AUTO-SHOP & STORAGE - HỌC TỪ COVIET) -->
         <div id="sm-tab-shop" class="sm-tab-content" style="display: none; flex-direction: column; gap: 7px;">
-          <!-- Auto-Shop Box -->
+          <!-- Auto-Shop HP Potions Card -->
           <div style="background: rgba(28, 22, 13, 0.9); border: 1px solid rgba(255,179,0,0.4); border-radius: 8px; padding: 7px 9px; display: flex; flex-direction: column; gap: 5px;">
             <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; color: #ffe082; font-size: 10.5px; font-weight: bold; user-select: none;">
               <input type="checkbox" id="sm-toggle-autoshop" ${cfg.autoShop ? 'checked' : ''} style="cursor: pointer; width: 13px; height: 13px;">
@@ -1594,7 +2100,43 @@
             </button>
           </div>
 
-          <!-- Session Token Tools -->
+          <!-- Auto-Storage Deposit Card (Đặt cọc kho) -->
+          <div style="background: rgba(18, 28, 20, 0.9); border: 1px solid rgba(76,175,80,0.4); border-radius: 8px; padding: 7px 9px; display: flex; flex-direction: column; gap: 5px;">
+            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; color: #a5d6a7; font-size: 10.5px; font-weight: bold; user-select: none;">
+              <input type="checkbox" id="sm-toggle-autostore" style="cursor: pointer; width: 13px; height: 13px;">
+              <span>📦 Tự Cất Đồ Quý Vào Kho (Thủ Kho)</span>
+            </label>
+            <div style="font-size: 9px; color: #81c784;">Khi túi đầy, tự động tới Thủ Kho cất trang bị đạt chuẩn giữ lại (không bán nhầm).</div>
+            <button id="sm-btn-force-store" style="width: 100%; background: linear-gradient(135deg, #2e7d32, #43a047); border: none; border-radius: 5px; padding: 5px; color: #fff; font-weight: bold; font-size: 10px; cursor: pointer;">
+              📦 Đi Cất Đồ Vào Kho Ngay
+            </button>
+          </div>
+
+          <!-- Advanced Selling Filters (Bộ lọc bán đồ thông minh) -->
+          <div style="background: rgba(16, 21, 31, 0.9); border: 1px solid rgba(33,150,243,0.3); border-radius: 8px; padding: 7px 9px; display: flex; flex-direction: column; gap: 5px; font-size: 10px;">
+            <span style="font-weight: bold; color: #90caf9;">⚙️ BỘ LỌC BÁN ĐỒ CHI TIẾT:</span>
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span style="color: #b0bec5;">Giữ phẩm chất:</span>
+              <select id="sm-sel-keep-rarity" style="background: #0b0f17; color: #ffd76a; border: 1px solid #30363d; border-radius: 4px; padding: 2px 4px; font-size: 9.5px;">
+                <option value="0">Giữ mọi đồ</option>
+                <option value="1">Từ Xanh lá (Bán Trắng)</option>
+                <option value="2">Từ Xanh lam (Bán Trắng/Lá)</option>
+                <option value="3" selected>Từ Tím (Bán Trắng/Lá/Lam)</option>
+                <option value="4">Từ Cam (Bán Tím trở xuống)</option>
+              </select>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span style="color: #b0bec5;">Giữ cấp từ:</span>
+              <input id="sm-input-keep-lv" type="number" min="1" max="100" value="1" style="width: 50px; background: #0b0f17; color: #fff; border: 1px solid #30363d; border-radius: 4px; padding: 2px 4px; font-size: 9.5px;">
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span style="color: #b0bec5;">Bán nguyên liệu rác:</span>
+              <input type="checkbox" id="sm-chk-sell-mats" checked style="cursor: pointer;">
+            </div>
+            <div style="font-size: 8.5px; color: #ffb74d;">🛡️ Bảo vệ tuyệt đối: Bình máu, đồ nhiệm vụ, ấn, ngọc, đồ đang trang bị!</div>
+          </div>
+
+          <!-- Session Token Tools & Chat Button -->
           <div style="background: rgba(16, 21, 31, 0.9); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 7px 9px; display: flex; flex-direction: column; gap: 5px;">
             <div style="font-weight: bold; color: #80d8ff; font-size: 10px;">🔑 QUẢN LÝ MÃ PHIÊN TÀI KHOẢN:</div>
             <div style="display: flex; gap: 4px;">
@@ -1606,7 +2148,7 @@
           </div>
 
           <div style="display: flex; gap: 6px;">
-            <button id="sm-btn-open-chat" style="flex: 1; background: #3e2723; border: 1px solid #ffb300; color: #ffd76a; border-radius: 5px; font-size: 10px; padding: 4px; cursor: pointer; font-weight: bold;">💬 Khung Chat Nổi</button>
+            <button id="sm-btn-open-chat" style="flex: 1; background: #3e2723; border: 1px solid #ffb300; color: #ffd76a; border-radius: 5px; font-size: 10px; padding: 4px; cursor: pointer; font-weight: bold;">💬 Mở Khung Chat Nổi</button>
           </div>
         </div>
       </div>
@@ -1670,6 +2212,7 @@
   const tabBtns = botPanel.querySelectorAll('.sm-tab-btn');
   const tabContents = {
     combat: botPanel.querySelector('#sm-tab-combat'),
+    quest: botPanel.querySelector('#sm-tab-quest'),
     skills: botPanel.querySelector('#sm-tab-skills'),
     shop: botPanel.querySelector('#sm-tab-shop')
   };
@@ -1745,12 +2288,18 @@
     lastTapTime = now;
   });
 
-  // Auto-Shop Event Handlers
+  // Auto-Shop & Auto-Store Event Handlers
   const chkAutoShop = botPanel.querySelector('#sm-toggle-autoshop');
   const btnForceShop = botPanel.querySelector('#sm-btn-force-shop');
   const elShopStatus = botPanel.querySelector('#sm-shop-status');
   const elTrashSold = botPanel.querySelector('#sm-trash-sold');
   const elPotionsBought = botPanel.querySelector('#sm-potions-bought');
+
+  const chkAutoStore = botPanel.querySelector('#sm-toggle-autostore');
+  const btnForceStore = botPanel.querySelector('#sm-btn-force-store');
+  const selKeepRarity = botPanel.querySelector('#sm-sel-keep-rarity');
+  const inputKeepLv = botPanel.querySelector('#sm-input-keep-lv');
+  const chkSellMats = botPanel.querySelector('#sm-chk-sell-mats');
 
   if (chkAutoShop) {
     chkAutoShop.onchange = e => {
@@ -1761,6 +2310,63 @@
   if (btnForceShop) {
     btnForceShop.onclick = () => {
       triggerShopTrip(true);
+    };
+  }
+  if (chkAutoStore) {
+    chkAutoStore.onchange = e => {
+      cfg.autoStore = e.target.checked;
+    };
+  }
+  if (btnForceStore) {
+    btnForceStore.onclick = () => {
+      triggerStorageTrip(true);
+    };
+  }
+  if (selKeepRarity) {
+    selKeepRarity.onchange = e => {
+      cfg.keepRarity = parseInt(e.target.value, 10);
+    };
+  }
+  if (inputKeepLv) {
+    inputKeepLv.onchange = e => {
+      cfg.keepLevel = parseInt(e.target.value, 10) || 1;
+    };
+  }
+  if (chkSellMats) {
+    chkSellMats.onchange = e => {
+      cfg.sellMats = e.target.checked;
+    };
+  }
+
+  // Auto-Quest Event Handlers
+  const chkAutoQuest = botPanel.querySelector('#sm-toggle-autoquest');
+  const chkQuestSide = botPanel.querySelector('#sm-chk-quest-side');
+  const chkQuestDaily = botPanel.querySelector('#sm-chk-quest-daily');
+  const btnDoQuest = botPanel.querySelector('#sm-btn-do-quest');
+  const elQTitle = botPanel.querySelector('#sm-q-title');
+  const elQGoal = botPanel.querySelector('#sm-q-goal');
+  const elQProg = botPanel.querySelector('#sm-q-prog');
+  const elQStep = botPanel.querySelector('#sm-q-step-desc');
+
+  if (chkAutoQuest) {
+    chkAutoQuest.onchange = e => {
+      cfg.autoQuest = e.target.checked;
+    };
+  }
+  if (chkQuestSide) {
+    chkQuestSide.onchange = e => {
+      cfg.questDoSide = e.target.checked;
+    };
+  }
+  if (chkQuestDaily) {
+    chkQuestDaily.onchange = e => {
+      cfg.questDoDaily = e.target.checked;
+    };
+  }
+  if (btnDoQuest) {
+    btnDoQuest.onclick = () => {
+      cfg.autoQuest = true;
+      if (chkAutoQuest) chkAutoQuest.checked = true;
     };
   }
 
@@ -2199,18 +2805,35 @@
       if (window.GAME?.ui?.quickUse) window.GAME.ui.quickUse('mana');
     }
 
-    // ==========================================
-    // AUTO-SHOP & POTION REFILL CONTROLLER (v13.9)
-    // ==========================================
-    if (cfg.autoShop) {
-      const invInfo = inspectInventory();
-      if (elTrashSold) elTrashSold.textContent = devState.totalTrashSold;
-      if (elPotionsBought) elPotionsBought.textContent = devState.totalPotionsBought;
+    // =======================================================================
+    // 1. AUTO-SHOP & AUTO-STORAGE CONTROLLER (HỌC TỪ COVIET)
+    // =======================================================================
+    const invInfo = inspectInventory();
+    if (elTrashSold) elTrashSold.textContent = devState.totalTrashSold;
+    if (elPotionsBought) elPotionsBought.textContent = devState.totalPotionsBought;
 
+    // A. Cất Đồ Vào Kho (Thủ Kho) khi túi đầy và có trang bị quý
+    if (cfg.autoStore && !storageState.active && !autoShopState.active) {
+      if (invInfo.freeSlots <= cfg.autoShopFreeSlotTrigger && invInfo.keeperSlots.length > 0) {
+        triggerStorageTrip();
+      }
+    }
+    if (storageState.active) {
+      if (miniStateEl) {
+        miniStateEl.textContent = storageState.statusText;
+        miniStateEl.style.color = '#00e5ff';
+      }
+      handleStorageStep(me, now, invInfo.keeperSlots);
+      return;
+    }
+
+    // B. Bán Đồ & Nạp 100 Bình Máu
+    if (cfg.autoShop) {
       if (!autoShopState.active) {
-        const isFullBag = invInfo.freeSlots <= cfg.autoShopFreeSlotTrigger;
-        const isOutOfPotions = invInfo.hpPotionCount <= cfg.autoShopHpPotionTrigger;
-        if (isFullBag || isOutOfPotions) {
+        const needsHpPotions = (invInfo.hpPotionCount <= cfg.autoShopHpPotionTrigger);
+        const bagIsFull = (invInfo.freeSlots <= cfg.autoShopFreeSlotTrigger && invInfo.sellableSlots.length > 0);
+
+        if (needsHpPotions || bagIsFull) {
           triggerShopTrip();
         }
       }
@@ -2222,10 +2845,36 @@
           miniStateEl.style.color = '#ffb300';
         }
         handleAutoShopStep(me, now, invInfo);
-        return; // Dành toàn bộ tick để đi shop / bán đồ / quay về
+        return;
       } else {
         if (elShopStatus) elShopStatus.textContent = `🟢 Farm (Trống: ${invInfo.freeSlots}/48 | Máu: ${invInfo.hpPotionCount})`;
       }
+    }
+
+    // =======================================================================
+    // 2. AUTO-QUEST CONTROLLER (HỌC TỪ COVIET)
+    // =======================================================================
+    if (cfg.autoQuest && !autoShopState.active && !storageState.active) {
+      const isQuestNavigating = handleAutoQuest(me, now);
+      if (isQuestNavigating) return;
+    }
+
+    // Cập nhật giao diện Quest tab theo thời gian thực:
+    const activeQ = getActiveQuest();
+    if (activeQ && elQTitle) {
+      const qDef = getQuestDef(activeQ.id);
+      const qStep = qDef?.steps?.[activeQ.step];
+      elQTitle.textContent = qDef?.name || activeQ.title || activeQ.id;
+      if (elQGoal) elQGoal.textContent = qStep?.title || qStep?.type || 'Làm nhiệm vụ';
+      if (elQProg) elQProg.textContent = `${activeQ.have ?? 0}/${activeQ.need || qStep?.n || 1}`;
+      if (elQStep) {
+        elQStep.textContent = activeQ.ready ? 'Gặp NPC trả nhiệm vụ' : (qStep?.type === 'talk' ? 'Nói chuyện NPC' : (qStep?.type === 'kill' ? 'Diệt quái: ' + (qStep.mob || 'quái') : (qStep?.type === 'collect' ? 'Nhặt đồ quái rơi' : 'Đi tới nơi')));
+      }
+    } else if (elQTitle) {
+      elQTitle.textContent = 'Không có nhiệm vụ';
+      if (elQGoal) elQGoal.textContent = 'Đã hoàn thành tất cả';
+      if (elQProg) elQProg.textContent = '100%';
+      if (elQStep) elQStep.textContent = 'Sẵn sàng';
     }
 
     if (statAtkEl) statAtkEl.textContent = devState.totalAttacks;
@@ -2304,7 +2953,18 @@
 
       if (validDrops.length > 0) {
         movementState = 'STAND';
-        validDrops.sort((a, b) => (a.mine !== b.mine ? (b.mine ? 1 : -1) : a.dist - b.dist));
+        validDrops.sort((a, b) => {
+          // Ưu tiên 1: Đồ nhiệm vụ đang cần thu thập (Học từ CoViet)
+          if (questState?.collectItem) {
+            const aIsQ = a.item === questState.collectItem;
+            const bIsQ = b.item === questState.collectItem;
+            if (aIsQ !== bIsQ) return bIsQ ? 1 : -1;
+          }
+          // Ưu tiên 2: Đồ của mình rơi
+          if (a.mine !== b.mine) return b.mine ? 1 : -1;
+          // Ưu tiên 3: Khoảng cách gần nhất
+          return a.dist - b.dist;
+        });
         const targetDrop = validDrops[0];
 
         if (targetDrop.dist <= 42) {
@@ -2490,7 +3150,7 @@
     // Xả kỹ năng: Khi bị vây khẩn cấp, kích hoạt Choáng diện rộng ngay lập tức!
     executeOracleAttack(targetMob, now, distToTarget, state.dMin, state.closestMob, state.pursuerCount, isPinnedAgainstWall, state.isPvP);
 
-    if (miniStatusEl) miniStatusEl.textContent = cfg.enabled ? '🟢 Bot v13.9' : '🔴 Tạm dừng';
+    if (miniStatusEl) miniStatusEl.textContent = cfg.enabled ? '🟢 Bot v14.0' : '🔴 Tạm dừng';
     if (miniAtkEl) miniAtkEl.textContent = devState.totalAttacks;
     if (miniBreakoutEl) miniBreakoutEl.textContent = devState.breakoutsTriggered;
     if (miniStateEl && statusTxt) miniStateEl.textContent = statusTxt.textContent;
@@ -2498,7 +3158,7 @@
 
 
   window._ancientMasterBot = {
-    version: '13.9',
+    version: '14.0',
     cfg,
     devState,
     skillTimers,
@@ -2523,10 +3183,10 @@
       if (origUiChatLine && window.GAME?.ui) window.GAME.ui.chatLine = origUiChatLine;
       if (origUiToggleChat && window.GAME?.ui) window.GAME.ui.toggleChat = origUiToggleChat;
       delete window._ancientMasterBot;
-      console.log("%c[BOT v13.9] Đã gỡ bỏ toàn bộ giao diện và tiến trình.", "color: #ff9800; font-weight: bold;");
+      console.log("%c[BOT v14.0] Đã gỡ bỏ toàn bộ giao diện và tiến trình.", "color: #ff9800; font-weight: bold;");
     }
   };
 
-    console.log("%c[BOT v13.9] KHỞI ĐỘNG THÀNH CÔNG: SMART AUTO-SHOP, PVP SOLO & MOBILE RESPONSIVE UI!", "color: #00e676; font-size: 14px; font-weight: bold;");
+    console.log("%c[BOT v14.0] KHỞI ĐỘNG THÀNH CÔNG: SMART AUTO-SHOP, PVP SOLO & MOBILE RESPONSIVE UI!", "color: #00e676; font-size: 14px; font-weight: bold;");
   }
 })();

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Ancient Realm - Master Bot v14.0 (Cyber UI & 60 FPS Canvas Optimizer)",
+  "name": "Ancient Realm - Master Bot v14.0 (CoViet Auto-Quest, Storage & Smart Sell)",
   "version": "14.0.0",
-  "description": "Giao diện Tab Cyberpunk siêu gọn, tối ưu Canvas 60 FPS ẩn hitbox đỏ, nạp 100 bình máu, khóa mục tiêu chống mất focus.",
+  "description": "Học từ CoViet: Auto-Quest nhận/làm/trả, Bộ lọc bán đồ rác chi tiết, Tự cất đồ kho Thủ Kho, Nạp 100 bình máu, 60 FPS Canvas.",
   "author": "Antigravity",
   "icons": {
     "48": "icon48.png",
