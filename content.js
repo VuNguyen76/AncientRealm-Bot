@@ -64,6 +64,7 @@
     if (window._ancientMasterBot) window._ancientMasterBot.destroy();
     const oldPanels = document.querySelectorAll('[id^="ancient-master-bot"], #sm-mini-badge, #sm-fab-toggle, #ancient-floating-chat, #ancient-chat-bubble');
     oldPanels.forEach(p => p.remove());
+    disableNativeAutoFight();
 
     const MOB_BASE = 1_000_000;
 
@@ -439,10 +440,27 @@
     return { x: mob.x, y: mob.y, r: 180 };
   }
 
+  function disableNativeAutoFight() {
+    try {
+      if (window.GAME?.ui) {
+        window.GAME.ui.autoFight = false;
+        try {
+          Object.defineProperty(window.GAME.ui, 'autoFight', {
+            get: () => false,
+            set: () => {},
+            configurable: true
+          });
+        } catch(e) {}
+      }
+      localStorage.setItem('dainam_autofight', '0');
+    } catch(e) {}
+  }
+
   // ==========================================
-  // HỆ THỐNG CHỌN MỤC TIÊU & PHÁ VÂY
+  // HỆ THỐNG CHỌN MỤC TIÊU & PHÁ VÂY (CHUẨN FOCUS & CHỐNG ĐỔI MỤC TIÊU LUNG TUNG)
   // ==========================================
   function resolveTargetAndState(me) {
+    disableNativeAutoFight();
     const allMobs = window.GAME?.mobs ? Array.from(window.GAME.mobs.values()).filter(m => !(m.st & 1) && m.hp > 0) : [];
     const spawns = window.GAME?.world?.zone?.spawns || [];
     const cfgTarget = cfg.targetMob;
@@ -453,7 +471,6 @@
     const myId = mePlayer?.id;
     const myHp = mePlayer?.hp || 1000;
     const myMaxHp = mePlayer?.maxHp || mePlayer?.mhp || 1000;
-    const isHpLow = myHp < myMaxHp * 0.92;
 
     const zoneId = window.GAME?.world?.zone?.id;
     const isPvpZone = zoneId === 'vodai' || window.GAME?.world?.zone?.pvp === true;
@@ -462,27 +479,19 @@
     // 0. HỆ THỐNG PVP SOLO 1V1 / TỈ THÍ / PK (ƯU TIÊN HÀNG ĐẦU)
     // ==========================================
     let pvpOpponent = null;
-
-    // a. Trận Tỉ Thí Lôi Đài đang diễn ra (Duel packet)
     if (window._activeDuel && window._activeDuel.foeId) {
       pvpOpponent = allPlayers.find(p => p.id === window._activeDuel.foeId && !(p.st & 1) && p.hp > 0);
     }
-
-    // b. Người chơi được click chọn hoặc đang khóa mục tiêu (lockId / targetId)
     if (!pvpOpponent) {
       const lock = window.GAME?.lockId || window.GAME?.targetId;
       if (lock && lock < 1_000_000 && lock !== myId) {
         pvpOpponent = allPlayers.find(p => p.id === lock && !(p.st & 1) && p.hp > 0);
       }
     }
-
-    // c. Mục tiêu người chơi được chọn từ dropdown (cfgTarget = 'player_XXX')
     if (!pvpOpponent && cfgTarget && cfgTarget.startsWith('player_')) {
       const pId = parseInt(cfgTarget.replace('player_', ''));
       pvpOpponent = allPlayers.find(p => p.id === pId && !(p.st & 1) && p.hp > 0);
     }
-
-    // d. Tự động nhận diện đối thủ trong bản đồ Võ Đài / PK
     if (!pvpOpponent && isPvpZone) {
       const rivals = allPlayers.filter(p => p.id !== myId && !(p.st & 1) && p.hp > 0);
       if (rivals.length > 0) {
@@ -491,12 +500,17 @@
       }
     }
 
-    // NẾU CÓ ĐỐI THỦ PVP: KÍCH HOẠT CHẾ ĐỘ CHIẾN ĐẤU SOLO VÀ NÉ TẦM SKILL
     if (pvpOpponent) {
       const dist = Math.hypot(pvpOpponent.x - me.x, pvpOpponent.y - me.y);
       const oppCls = pvpOpponent.cls?.id || pvpOpponent.cls || 'thienvuong';
       const isMelee = oppCls === 'thienvuong' || oppCls === 'longtuyen';
       const isRanged = oppCls === 'sonthan' || oppCls === 'linhmoc';
+
+      currentTargetId = pvpOpponent.id;
+      if (window.GAME) {
+        window.GAME.lockId = pvpOpponent.id;
+        window.GAME.targetId = pvpOpponent.id;
+      }
 
       return {
         target: pvpOpponent,
@@ -515,7 +529,7 @@
     }
 
     // ==========================================
-    // CƠ CHẾ PVE: TÌM QUÁI, BOSS, PHẢN CÔNG & DỌN ĐƯỜNG
+    // CƠ CHẾ PVE: TÍNH KHOẢNG CÁCH D_MIN & QUÁI BÁM
     // ==========================================
     let dMin = Infinity, closestMob = null;
     const pursuers = [];
@@ -532,186 +546,162 @@
     }
     pursuers.sort((a, b) => a.dist - b.dist);
 
-    const activeBoss = allMobs.find(m => {
-      const def = getMobDef(m);
-      return !!(def?.boss || def?.elite || m.kind === 'chantinh' || m.kind === 'daibang' || m.kind === 'moctinh' || m.kind === 'xuongho');
-    });
-
-    if (activeBoss) {
-      const distToBoss = Math.hypot(activeBoss.x - me.x, activeBoss.y - me.y);
-      if (distToBoss <= 480 || (myId && activeBoss.tgt === myId)) {
-        const adds = pursuers.filter(p => p.mob.id !== activeBoss.id && !getMobDef(p.mob)?.boss && !getMobDef(p.mob)?.elite);
-        if (adds.length > 0) {
-          adds.sort((a, b) => (a.mob.hp - b.mob.hp) || (a.dist - b.dist));
-          const targetAdd = adds[0].mob;
-          return {
-            target: targetAdd,
-            isAddClear: true,
-            isPeeling: adds[0].dist <= 130,
-            dMin: dMin === Infinity ? 999 : dMin,
-            closestMob,
-            pursuers: pursuers.map(p => p.mob),
-            pursuerCount: pursuers.length,
-            spawnCenter: findDynamicSpawnCenter(activeBoss, me),
-            isBoss: false,
-            bossContext: activeBoss
-          };
-        }
-      }
-    }
-
-    let chosenTarget = null;
-    let targetDest = null;
-    let targetSpawn = null;
-
-    // TARGET STICKINESS: Nếu đang khóa 1 mục tiêu quái hợp lệ, còn sống và nằm trong tầm (< 420px):
-    let stickyMob = null;
-    if (currentTargetId) {
-      stickyMob = allMobs.find(m => m.id === currentTargetId);
-      if (stickyMob) {
-        const dSticky = Math.hypot(stickyMob.x - me.x, stickyMob.y - me.y);
-        const matchesCfg = (cfgTarget === 'all' || stickyMob.kind === cfgTarget || getMobDef(stickyMob)?.id === cfgTarget);
-        if (dSticky > 420 || !matchesCfg) {
-          stickyMob = null;
-        }
-      }
-    }
-
+    // ==========================================
+    // 1. KHI NGƯỜI DÙNG LỌC QUÁI CỤ THỂ (cfgTarget !== 'all')
+    // TUYỆT ĐỐI KHÔNG BỊ CƯỚP FOCUS BỞI BẤT KỲ QUÁI NÀO KHÁC!
+    // ==========================================
     if (cfgTarget !== 'all') {
-      if (stickyMob) {
-        chosenTarget = stickyMob;
-        targetDest = { x: chosenTarget.x, y: chosenTarget.y };
-      } else {
-        const matchingMobs = allMobs.filter(m => m.kind === cfgTarget || getMobDef(m)?.id === cfgTarget);
-        if (matchingMobs.length > 0) {
-          matchingMobs.sort((a, b) => Math.hypot(a.x - me.x, a.y - me.y) - Math.hypot(b.x - me.x, b.y - me.y));
-          chosenTarget = matchingMobs[0];
-          targetDest = { x: chosenTarget.x, y: chosenTarget.y };
-        } else {
-          const matchingSpawns = spawns.filter(s => s.mob === cfgTarget);
-          if (matchingSpawns.length > 0) {
-            matchingSpawns.sort((a, b) => Math.hypot(a.x - me.x, a.y - me.y) - Math.hypot(b.x - me.x, b.y - me.y));
-            targetSpawn = matchingSpawns[0];
-            targetDest = { x: targetSpawn.x, y: targetSpawn.y };
+      let lockedTarget = null;
+      if (currentTargetId) {
+        const cur = allMobs.find(m => m.id === currentTargetId);
+        if (cur && !(cur.st & 1) && cur.hp > 0) {
+          const dCur = Math.hypot(cur.x - me.x, cur.y - me.y);
+          const matches = (cur.kind === cfgTarget || getMobDef(cur)?.id === cfgTarget || (cfgTarget.startsWith('player_') && cur.id === parseInt(cfgTarget.replace('player_',''))));
+          if (dCur <= 550 && matches) {
+            lockedTarget = cur;
           }
         }
       }
-    } else {
-      chosenTarget = activeBoss || stickyMob || closestMob;
-      if (chosenTarget) {
-        targetDest = { x: chosenTarget.x, y: chosenTarget.y };
+
+      if (lockedTarget) {
+        const d = Math.hypot(lockedTarget.x - me.x, lockedTarget.y - me.y);
+        const def = getMobDef(lockedTarget);
+        return {
+          target: lockedTarget,
+          dMin: dMin === Infinity ? d : dMin,
+          closestMob: closestMob || lockedTarget,
+          pursuers: pursuers.map(p => p.mob),
+          pursuerCount: pursuers.length,
+          spawnCenter: findDynamicSpawnCenter(lockedTarget, me),
+          isBoss: !!(def?.boss || def?.elite || ['chantinh','daibang','moctinh','xuongho'].includes(lockedTarget.kind)),
+          isPeeling: dMin <= 120
+        };
       }
-    }
 
-    if (myId) {
-      const aggroAttackers = pursuers.filter(p => {
-        const m = p.mob;
-        if (chosenTarget && m.id === chosenTarget.id) return false;
-        return m.tgt === myId && p.dist <= 260;
-      });
-
-      if (aggroAttackers.length > 0) {
-        const distToChosen = chosenTarget ? Math.hypot(chosenTarget.x - me.x, chosenTarget.y - me.y) : Infinity;
-        const urgentThreat = isHpLow || aggroAttackers[0].dist <= 170 || distToChosen > 180 || !chosenTarget;
-
-        if (urgentThreat) {
-          aggroAttackers.sort((a, b) => (a.mob.hp - b.mob.hp) || (a.dist - b.dist));
-          const retaliateMob = aggroAttackers[0].mob;
-          return {
-            target: retaliateMob,
-            isRetaliation: true,
-            isPeeling: aggroAttackers[0].dist <= 130,
-            dMin: dMin === Infinity ? 999 : dMin,
-            closestMob,
-            pursuers: pursuers.map(p => p.mob),
-            pursuerCount: pursuers.length,
-            spawnCenter: findDynamicSpawnCenter(retaliateMob, me),
-            isBoss: !!(getMobDef(retaliateMob)?.boss || getMobDef(retaliateMob)?.elite),
-            navigatingSpawn: targetSpawn
-          };
+      // Chưa có mục tiêu khóa: Tìm con quái đúng loại lọc gần nhất
+      const matchingMobs = allMobs.filter(m => m.kind === cfgTarget || getMobDef(m)?.id === cfgTarget);
+      if (matchingMobs.length > 0) {
+        matchingMobs.sort((a, b) => Math.hypot(a.x - me.x, a.y - me.y) - Math.hypot(b.x - me.x, b.y - me.y));
+        const newTarget = matchingMobs[0];
+        currentTargetId = newTarget.id;
+        if (window.GAME) {
+          window.GAME.lockId = newTarget.id;
+          window.GAME.targetId = newTarget.id;
         }
+        const d = Math.hypot(newTarget.x - me.x, newTarget.y - me.y);
+        const def = getMobDef(newTarget);
+        return {
+          target: newTarget,
+          dMin: dMin === Infinity ? d : dMin,
+          closestMob: closestMob || newTarget,
+          pursuers: pursuers.map(p => p.mob),
+          pursuerCount: pursuers.length,
+          spawnCenter: findDynamicSpawnCenter(newTarget, me),
+          isBoss: !!(def?.boss || def?.elite || ['chantinh','daibang','moctinh','xuongho'].includes(newTarget.kind)),
+          isPeeling: dMin <= 120
+        };
       }
-    }
 
-    if (targetDest) {
-      const dxDest = targetDest.x - me.x;
-      const dyDest = targetDest.y - me.y;
-      const distDest = Math.hypot(dxDest, dyDest);
-
-      if (distDest > 120) {
-        const roadblocks = [];
-        for (const p of pursuers) {
-          const m = p.mob;
-          if (chosenTarget && m.id === chosenTarget.id) continue;
-          if (p.dist > 220 || p.dist >= distDest) continue;
-
-          const dot = ((targetDest.x - me.x) * (m.x - me.x) + (targetDest.y - me.y) * (m.y - me.y)) / (distDest * p.dist);
-          if (dot >= 0.707) {
-            const crossDist = Math.abs((targetDest.x - me.x) * (m.y - me.y) - (targetDest.y - me.y) * (m.x - me.x)) / distDest;
-            if (crossDist <= 70) {
-              roadblocks.push({ mob: m, dist: p.dist, crossDist, hp: m.hp });
-            }
-          }
-        }
-
-        if (roadblocks.length > 0) {
-          roadblocks.sort((a, b) => (a.dist - b.dist) || (a.hp - b.hp));
-          const roadblockMob = roadblocks[0].mob;
-          return {
-            target: roadblockMob,
-            isRoadblock: true,
-            isPeeling: roadblocks[0].dist <= 130,
-            dMin: dMin === Infinity ? 999 : dMin,
-            closestMob,
-            pursuers: pursuers.map(p => p.mob),
-            pursuerCount: pursuers.length,
-            spawnCenter: findDynamicSpawnCenter(roadblockMob, me),
-            isBoss: !!(getMobDef(roadblockMob)?.boss || getMobDef(roadblockMob)?.elite),
-            navigatingSpawn: targetSpawn
-          };
-        }
+      // Quái đã lọc chưa xuất hiện: Tìm bãi spawn của quái đó và chạy thẳng đến bãi!
+      const matchingSpawns = spawns.filter(s => s.mob === cfgTarget);
+      if (matchingSpawns.length > 0) {
+        matchingSpawns.sort((a, b) => Math.hypot(a.x - me.x, a.y - me.y) - Math.hypot(b.x - me.x, b.y - me.y));
+        const targetSpawn = matchingSpawns[0];
+        currentTargetId = null;
+        return {
+          target: null,
+          navigatingSpawn: targetSpawn,
+          dMin: dMin === Infinity ? 999 : dMin,
+          closestMob,
+          pursuers: pursuers.map(p => p.mob),
+          pursuerCount: pursuers.length,
+          spawnCenter: { x: targetSpawn.x, y: targetSpawn.y, r: targetSpawn.r || 200 },
+          isBoss: false,
+          isPeeling: false
+        };
       }
-    }
 
-    if (chosenTarget) {
-      const spawnCenter = findDynamicSpawnCenter(chosenTarget, me);
-      const closeThreat = pursuers.find(p => p.mob.id !== chosenTarget.id && p.dist <= 130);
-
-      return {
-        target: closeThreat ? closeThreat.mob : chosenTarget,
-        isPeeling: !!closeThreat,
-        dMin: dMin === Infinity ? 999 : dMin,
-        closestMob,
-        pursuers: pursuers.map(p => p.mob),
-        pursuerCount: pursuers.length,
-        spawnCenter,
-        isBoss: !!(getMobDef(chosenTarget)?.boss || getMobDef(chosenTarget)?.elite),
-        navigatingSpawn: targetSpawn
-      };
-    }
-
-    if (targetSpawn) {
+      // Không tìm thấy bãi quái này trên map
+      currentTargetId = null;
       return {
         target: null,
-        navigatingSpawn: targetSpawn,
         dMin: dMin === Infinity ? 999 : dMin,
         closestMob,
         pursuers: pursuers.map(p => p.mob),
         pursuerCount: pursuers.length,
-        spawnCenter: null,
-        isBoss: false
+        spawnCenter: { x: me.x, y: me.y, r: 200 },
+        isBoss: false,
+        isPeeling: false
       };
     }
 
+    // ==========================================
+    // 2. CHẾ ĐỘ ĐÁNH TẤT CẢ QUÁI (cfgTarget === 'all')
+    // ==========================================
+    // a. Target Stickiness: Nếu đang đánh 1 con quái, dính chặt vào nó cho đến khi chết!
+    let lockedTarget = null;
+    if (currentTargetId) {
+      const cur = allMobs.find(m => m.id === currentTargetId);
+      if (cur && !(cur.st & 1) && cur.hp > 0) {
+        const dCur = Math.hypot(cur.x - me.x, cur.y - me.y);
+        if (dCur <= 500) {
+          lockedTarget = cur;
+        }
+      }
+    }
+
+    if (lockedTarget) {
+      const d = Math.hypot(lockedTarget.x - me.x, lockedTarget.y - me.y);
+      const def = getMobDef(lockedTarget);
+      return {
+        target: lockedTarget,
+        dMin: dMin === Infinity ? d : dMin,
+        closestMob: closestMob || lockedTarget,
+        pursuers: pursuers.map(p => p.mob),
+        pursuerCount: pursuers.length,
+        spawnCenter: findDynamicSpawnCenter(lockedTarget, me),
+        isBoss: !!(def?.boss || def?.elite || ['chantinh','daibang','moctinh','xuongho'].includes(lockedTarget.kind)),
+        isPeeling: dMin <= 120
+      };
+    }
+
+    // b. Nếu chưa có mục tiêu: Ưu tiên Boss nếu có trên map, nếu không lấy quái gần nhất
+    const activeBoss = allMobs.find(m => {
+      const def = getMobDef(m);
+      return !!(def?.boss || def?.elite || ['chantinh','daibang','moctinh','xuongho'].includes(m.kind));
+    });
+
+    const chosen = activeBoss || closestMob;
+    if (chosen) {
+      currentTargetId = chosen.id;
+      if (window.GAME) {
+        window.GAME.lockId = chosen.id;
+        window.GAME.targetId = chosen.id;
+      }
+      const d = Math.hypot(chosen.x - me.x, chosen.y - me.y);
+      const def = getMobDef(chosen);
+      return {
+        target: chosen,
+        dMin: dMin === Infinity ? d : dMin,
+        closestMob: closestMob || chosen,
+        pursuers: pursuers.map(p => p.mob),
+        pursuerCount: pursuers.length,
+        spawnCenter: findDynamicSpawnCenter(chosen, me),
+        isBoss: !!(def?.boss || def?.elite || ['chantinh','daibang','moctinh','xuongho'].includes(chosen.kind)),
+        isPeeling: dMin <= 120
+      };
+    }
+
+    currentTargetId = null;
     return {
       target: null,
-      navigatingSpawn: (spawns.length > 0 && cfgTarget !== 'all') ? spawns[0] : null,
       dMin: dMin === Infinity ? 999 : dMin,
       closestMob,
       pursuers: pursuers.map(p => p.mob),
       pursuerCount: pursuers.length,
-      spawnCenter: null,
-      isBoss: false
+      spawnCenter: { x: me.x, y: me.y, r: 200 },
+      isBoss: false,
+      isPeeling: false
     };
   }
 
@@ -740,6 +730,10 @@
     if (target.id !== lastTargetIdSent) {
       window.GAME.net.send({ t: 'tg', id: target.id });
       lastTargetIdSent = target.id;
+      if (window.GAME) {
+        window.GAME.lockId = target.id;
+        window.GAME.targetId = target.id;
+      }
     }
 
     const targetRadius = target.r || getMobDef(target)?.r || 24;
@@ -1265,11 +1259,12 @@
       }
 
       const potionPrice = GD.items?.[bestPotion]?.price || 30;
-      const needCount = cfg.autoShopMinPotionsToBuy - invInfo.hpPotionCount;
+      const currentPotions = invInfo.hpPotionCount;
+      const needCount = cfg.autoShopMinPotionsToBuy - (currentPotions + autoShopState.boughtPotionsCount);
 
       if (bestPotion && needCount > 0 && curGold >= potionPrice) {
-        if (now - autoShopState.lastActionTime >= 90) {
-          const batch = Math.min(3, needCount, Math.floor(curGold / potionPrice));
+        if (now - autoShopState.lastActionTime >= 80) {
+          const batch = Math.min(8, needCount, Math.floor(curGold / potionPrice));
           for (let b = 0; b < batch; b++) {
             window.GAME.net.send({ t: 'buy', s: autoShopState.shopNpc.npcId, m: bestPotion });
             autoShopState.boughtPotionsCount++;
@@ -1277,14 +1272,15 @@
           }
           autoShopState.lastActionTime = now;
           const potName = GD.items[bestPotion]?.name || bestPotion;
-          autoShopState.statusText = `🧪 Mua ${potName} (${invInfo.hpPotionCount}/${cfg.autoShopMinPotionsToBuy})`;
+          const totalEstimated = currentPotions + autoShopState.boughtPotionsCount;
+          autoShopState.statusText = `🧪 Nạp ${potName}: ${Math.min(cfg.autoShopMinPotionsToBuy, totalEstimated)}/${cfg.autoShopMinPotionsToBuy} bình`;
           if (statusTxt) statusTxt.textContent = autoShopState.statusText;
         }
         return;
       }
 
       // Đã mua đủ hoặc hết tiền -> Quay về bãi farm
-      logShopEvent(`🧪 Đã nạp ${autoShopState.boughtPotionsCount} bình máu! Chuẩn bị quay lại bãi farm.`);
+      logShopEvent(`🧪 Đã nạp ${autoShopState.boughtPotionsCount} bình máu (Tổng: ${invInfo.hpPotionCount} bình)! Chuẩn bị quay lại bãi farm.`);
 
       const returnRoute = safeMapRoute(curZone, autoShopState.farmZone);
       if (returnRoute !== null) {
@@ -2080,6 +2076,10 @@
       const curMob = window.GAME?.mobs?.get(currentTargetId);
       if (!curMob || (curMob.st & 1) || curMob.hp <= 0) {
         currentTargetId = null;
+        if (window.GAME) {
+          window.GAME.lockId = 0;
+          window.GAME.targetId = 0;
+        }
         if (lastTargetIdSent) {
           window.GAME.net.send({ t: 'tg', id: 0 });
           lastTargetIdSent = null;
