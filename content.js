@@ -170,19 +170,88 @@
 
     const MOB_BASE = 1_000_000;
 
-  function getMyCls() {
-    const self = window.GAME?.self;
-    const gdClasses = window.GAME?.GD?.classes;
-    if (!self || !gdClasses) return null;
-    return gdClasses[self.cls] || null;
+  // =========================================================================
+  // HỆ THỐNG VAI TRÒ CHIẾN ĐẤU (ROLE: ĐÁNH GẦN & ĐÁNH XA) - HỌC TỪ COVIET
+  // Chuẩn hóa môn phái:
+  // - Đánh Gần (Melee): Thiên Vương Phủ (range 95), Long Tuyền Môn (range 85)
+  // - Đánh Xa (Ranged): Linh Mộc Đường (range 260), Âm Dương Tông (range 280), Sơn Thần Giáo (range 320)
+  // =========================================================================
+  const CLASS_SPECS = {
+    thienvuong: { name: 'Thiên Vương Phủ', role: 'melee', defaultRange: 95, atkMs: 900, icon: '🗡️' },
+    longtuyen:  { name: 'Long Tuyền Môn',  role: 'melee', defaultRange: 85, atkMs: 650, icon: '⚔️' },
+    linhmoc:    { name: 'Linh Mộc Đường',  role: 'ranged', defaultRange: 260, atkMs: 1000, icon: '🌿' },
+    amduong:    { name: 'Âm Dương Tông',   role: 'ranged', defaultRange: 280, atkMs: 1000, icon: '☯️' },
+    sonthan:    { name: 'Sơn Thần Giáo',   role: 'ranged', defaultRange: 320, atkMs: 900, icon: '🏹' }
+  };
+
+  function detectClassFromSkills(self) {
+    const loadout = self?.loadout || [];
+    for (const skId of loadout) {
+      if (!skId || typeof skId !== 'string') continue;
+      if (skId.startsWith('tv_')) return 'thienvuong';
+      if (skId.startsWith('lt_')) return 'longtuyen';
+      if (skId.startsWith('lm_')) return 'linhmoc';
+      if (skId.startsWith('ad_')) return 'amduong';
+      if (skId.startsWith('st_')) return 'sonthan';
+    }
+    return null;
   }
 
-  const clsData = getMyCls();
-  const rawClassRange = clsData?.range || 280;
-  const maxRange = Math.round(rawClassRange + 30); // 310px
+  function getCharacterRoleInfo() {
+    const self = window.GAME?.self;
+    const GD = window.GAME?.GD || {};
+    const gdClasses = GD.classes || {};
+
+    let classId = self?.cls?.id || self?.cls || self?.class;
+    if (!classId || typeof classId !== 'string') {
+      classId = detectClassFromSkills(self) || 'amduong';
+    }
+
+    const spec = CLASS_SPECS[classId] || {};
+    const gdCls = gdClasses[classId] || {};
+
+    const className = gdCls.name || spec.name || classId;
+    const detectedRole = spec.role || ((gdCls.range && gdCls.range < 150) ? 'melee' : 'ranged');
+
+    // Role hoạt động thực tế: Lấy theo tùy chọn của người dùng (auto | melee | ranged)
+    const activeRole = (cfg?.combatRole && cfg.combatRole !== 'auto') ? cfg.combatRole : detectedRole;
+    const isMelee = (activeRole === 'melee');
+
+    // Tầm đánh cơ bản (baseRange) tính toán linh hoạt:
+    let baseRange;
+    if (cfg?.combatRole === 'melee') {
+      baseRange = (detectedRole === 'melee') ? (gdCls.range || spec.defaultRange || 95) : 95;
+    } else if (cfg?.combatRole === 'ranged') {
+      baseRange = (detectedRole === 'ranged') ? (gdCls.range || spec.defaultRange || 280) : 260;
+    } else {
+      baseRange = gdCls.range || spec.defaultRange || (isMelee ? 95 : 280);
+    }
+
+    const atkMs = gdCls.atkMs || spec.atkMs || 800;
+
+    return {
+      classId,
+      className,
+      detectedRole, // 'melee' | 'ranged'
+      activeRole,   // 'melee' | 'ranged'
+      isMelee,
+      baseRange,
+      atkMs,
+      icon: spec.icon || (isMelee ? '⚔️' : '🏹')
+    };
+  }
+
+  function getMyCls() {
+    const r = getCharacterRoleInfo();
+    return { id: r.classId, name: r.className, range: r.baseRange, atkMs: r.atkMs };
+  }
+
+  const rawClassRange = 280;
+  const maxRange = 310;
 
   const cfg = {
     enabled: true,
+    combatRole: 'auto', // 'auto': Tự nhận diện môn phái, 'melee': Đánh gần (cận chiến), 'ranged': Đánh xa (thả diều)
     targetMob: 'all',
     autoLoot: true,
     lootRadius: 320,
@@ -835,9 +904,9 @@
     const GD = window.GAME?.GD || {};
     const currentLoadout = self?.loadout || [];
     const currentMp = self?.mp || 500;
-    const myClass = self?.class || 'amduong';
-    const clsData = GD.classList?.find(c => c.id === myClass) || GD.classes?.[myClass] || {};
-    const baseRange = clsData.range || (['thienvuong', 'longtuyen'].includes(myClass) ? 95 : 280);
+    const roleInfo = getCharacterRoleInfo();
+    const baseRange = roleInfo.baseRange;
+    const isPlayerMelee = roleInfo.isMelee;
 
     const dx = target.x - me.x, dy = target.y - me.y;
     const len = Math.hypot(dx, dy) || 1;
@@ -924,8 +993,8 @@
       }
     }
 
-    // 4. ĐÒN ĐÁNH CƠ BẢN (AUTO-ATTACK): Đồng bộ chuẩn nhịp server để tránh bị máy chủ đá văng
-    const atkCd = clsData.atkMs ? Math.max(550, clsData.atkMs * 0.85) : 600;
+    // 4. ĐÒN ĐÁNH CƠ BẢN (AUTO-ATTACK): Chuẩn nhịp server theo role & tốc đánh môn phái
+    const atkCd = roleInfo.atkMs ? Math.max(500, Math.round(roleInfo.atkMs * 0.85)) : 600;
     if (now - lastAtkTime >= atkCd && distToTarget <= baseRange + targetRadius + 8) {
       window.GAME.net.send({ t: 'atk', id: target.id, x: nx, y: ny });
       lastAtkTime = now;
@@ -1972,6 +2041,19 @@
       <div style="flex: 1; overflow-y: auto; max-height: 290px; padding: 8px 10px; display: flex; flex-direction: column; gap: 7px; scrollbar-width: thin; scrollbar-color: #00e676 rgba(0,0,0,0.3);">
         <!-- TAB 1: CHIẾN ĐẤU -->
         <div id="sm-tab-combat" class="sm-tab-content" style="display: flex; flex-direction: column; gap: 7px;">
+          <!-- Role Đánh Gần & Xa Selector (Học từ CoViet) -->
+          <div style="background: rgba(16, 21, 31, 0.9); border: 1px solid rgba(0, 229, 255, 0.25); border-radius: 8px; padding: 6px 9px; display: flex; flex-direction: column; gap: 4px; font-size: 10.5px; margin-bottom: 5px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span style="font-weight: bold; color: #00e5ff; font-size: 10.5px;">🎯 VAI TRÒ CHIẾN ĐẤU:</span>
+              <span id="sm-role-badge" style="background: rgba(0,229,255,0.15); color: #00e5ff; padding: 1px 6px; border-radius: 4px; font-size: 9.5px; font-weight: bold;">Đang tải...</span>
+            </div>
+            <select id="sm-role-sel" style="width: 100%; background: #0b0f17; color: #fff; border: 1px solid #30363d; padding: 4px 6px; border-radius: 6px; font-size: 10.5px; outline: none; cursor: pointer;">
+              <option value="auto">🤖 Tự động nhận diện (Theo môn phái)</option>
+              <option value="melee">⚔️ Đánh Gần (Cận chiến / Melee - ~80px)</option>
+              <option value="ranged">🏹 Đánh Xa (Thả diều / Ranged - ~260px)</option>
+            </select>
+          </div>
+
           <!-- Target Selection Card -->
           <div style="background: rgba(19, 24, 34, 0.9); border: 1px solid rgba(255,215,106,0.35); border-radius: 8px; padding: 7px 9px;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
@@ -2707,6 +2789,21 @@
   mobSel.onchange = e => cfg.targetMob = e.target.value;
   botPanel.querySelector('#sm-btn-refresh-mobs').onclick = populateMobSelect;
 
+  const selCombatRole = botPanel.querySelector('#sm-role-sel');
+  const badgeCombatRole = botPanel.querySelector('#sm-role-badge');
+  if (selCombatRole) {
+    selCombatRole.value = cfg.combatRole || 'auto';
+    selCombatRole.onchange = e => {
+      cfg.combatRole = e.target.value;
+      const r = getCharacterRoleInfo();
+      if (badgeCombatRole) {
+        const modeTxt = cfg.combatRole === 'auto' ? `Tự động: ${r.className}` : (cfg.combatRole === 'melee' ? 'Ép Đánh Gần' : 'Ép Đánh Xa');
+        badgeCombatRole.textContent = `${r.icon} ${modeTxt} (${r.baseRange}px)`;
+        badgeCombatRole.style.color = r.isMelee ? '#ff5252' : '#00e5ff';
+      }
+    };
+  }
+
   const statusTxt = botPanel.querySelector('#sm-st-txt');
   const targetTxt = botPanel.querySelector('#sm-target-txt');
   const dminTxt = botPanel.querySelector('#sm-dmin-txt');
@@ -2811,6 +2908,15 @@
     const invInfo = inspectInventory();
     if (elTrashSold) elTrashSold.textContent = devState.totalTrashSold;
     if (elPotionsBought) elPotionsBought.textContent = devState.totalPotionsBought;
+
+    // Cập nhật thông tin Role & Tầm đánh theo thời gian thực:
+    if (badgeCombatRole && (!badgeCombatRole._lastUpdated || (now - badgeCombatRole._lastUpdated >= 1200))) {
+      badgeCombatRole._lastUpdated = now;
+      const r = getCharacterRoleInfo();
+      const modeTxt = cfg.combatRole === 'auto' ? `${r.className}` : (cfg.combatRole === 'melee' ? 'Ép Gần' : 'Ép Xa');
+      badgeCombatRole.textContent = `${r.icon} ${modeTxt} (${r.baseRange}px)`;
+      badgeCombatRole.style.color = r.isMelee ? '#ff5252' : '#00e5ff';
+    }
 
     // A. Cất Đồ Vào Kho (Thủ Kho) khi túi đầy và có trang bị quý
     if (cfg.autoStore && !storageState.active && !autoShopState.active) {
@@ -3028,37 +3134,40 @@
     }
 
     let retreatTrigger, retreatSafe, approachTrigger, approachStop;
-    const selfCls = window.GAME?.self?.class || 'amduong';
-    const isPlayerMelee = ['thienvuong', 'longtuyen'].includes(selfCls);
+    const roleInfo = getCharacterRoleInfo();
+    const isPlayerMelee = roleInfo.isMelee;
+    const baseRange = roleInfo.baseRange;
 
     if (state.isPvP) {
       if (state.isMeleeOpponent) {
-        retreatTrigger = isPlayerMelee ? 60 : 220;
-        retreatSafe = isPlayerMelee ? 85 : 265;
-        approachTrigger = isPlayerMelee ? 110 : 310;
-        approachStop = isPlayerMelee ? 65 : 250;
+        retreatTrigger = isPlayerMelee ? 60 : Math.round(baseRange * 0.72);
+        retreatSafe = isPlayerMelee ? 85 : Math.round(baseRange * 0.92);
+        approachTrigger = isPlayerMelee ? 110 : Math.round(baseRange * 1.08);
+        approachStop = isPlayerMelee ? 65 : Math.round(baseRange * 0.85);
       } else if (state.isRangedOpponent) {
-        retreatTrigger = isPlayerMelee ? 70 : 230;
-        retreatSafe = isPlayerMelee ? 95 : 280;
-        approachTrigger = isPlayerMelee ? 130 : 320;
-        approachStop = isPlayerMelee ? 70 : 260;
+        retreatTrigger = isPlayerMelee ? 70 : Math.round(baseRange * 0.75);
+        retreatSafe = isPlayerMelee ? 95 : Math.round(baseRange * 0.95);
+        approachTrigger = isPlayerMelee ? 130 : Math.round(baseRange * 1.12);
+        approachStop = isPlayerMelee ? 70 : Math.round(baseRange * 0.88);
       } else {
-        retreatTrigger = isPlayerMelee ? 60 : 220;
-        retreatSafe = isPlayerMelee ? 85 : 270;
-        approachTrigger = isPlayerMelee ? 110 : 310;
-        approachStop = isPlayerMelee ? 65 : 255;
+        retreatTrigger = isPlayerMelee ? 60 : Math.round(baseRange * 0.72);
+        retreatSafe = isPlayerMelee ? 85 : Math.round(baseRange * 0.92);
+        approachTrigger = isPlayerMelee ? 110 : Math.round(baseRange * 1.08);
+        approachStop = isPlayerMelee ? 65 : Math.round(baseRange * 0.85);
       }
     } else {
       if (isPlayerMelee) {
-        retreatTrigger = state.isBoss ? 70 : 55;
-        retreatSafe = state.isBoss ? 95 : 80;
-        approachTrigger = state.isBoss ? 130 : 110;
-        approachStop = state.isBoss ? 75 : 65;
+        // VAI TRÒ ĐÁNH GẦN (MELEE): Cận chiến áp sát ~60-70px chém liên hoàn, không lùi chạy lung tung trước quái thường
+        retreatTrigger = state.isBoss ? 55 : 35;
+        retreatSafe = state.isBoss ? 90 : 75;
+        approachTrigger = state.isBoss ? 125 : 105;
+        approachStop = state.isBoss ? 70 : 60;
       } else {
-        retreatTrigger = state.isBoss ? cfg.retreatTriggerDistBoss : cfg.retreatTriggerDistMob;
-        retreatSafe = state.isBoss ? cfg.retreatSafeDistBoss : cfg.retreatSafeDistMob;
-        approachTrigger = state.isBoss ? cfg.approachTriggerDistBoss : cfg.approachTriggerDistMob;
-        approachStop = state.isBoss ? cfg.approachStopDistBoss : cfg.approachStopDistMob;
+        // VAI TRÒ ĐÁNH XA (RANGED): Giữ cự ly vàng, đứng từ xa xả chiêu, thả diều (kiting) khi quái áp sát
+        retreatTrigger = state.isBoss ? Math.round(baseRange * 0.75) : Math.round(baseRange * 0.68);
+        retreatSafe = state.isBoss ? Math.round(baseRange * 0.95) : Math.round(baseRange * 0.88);
+        approachTrigger = state.isBoss ? Math.round(baseRange * 1.12) : Math.round(baseRange * 1.06);
+        approachStop = state.isBoss ? Math.round(baseRange * 0.88) : Math.round(baseRange * 0.82);
       }
     }
             
@@ -3127,7 +3236,11 @@
         const steer = calculateDirectSteering(me, targetMob.x, targetMob.y);
         setSteeringVector(steer.dx, steer.dy);
         if (statusTxt) {
-          statusTxt.textContent = state.isPvP ? `⚡ TIẾP CẬN SOLO: ${targetMob.name} (${Math.round(distToTarget)}px)` : `⚡ TIẾP CẬN BẮN TỈA: ${mobName} (${Math.round(distToTarget)}px)`;
+          statusTxt.textContent = state.isPvP 
+          ? `⚡ TIẾP CẬN SOLO: ${targetMob.name} (${Math.round(distToTarget)}px)` 
+          : (isPlayerMelee 
+              ? `⚔️ TIẾP CẬN ÁP SÁT: ${mobName} (${Math.round(distToTarget)}px -> ${approachStop}px)` 
+              : `🏹 TIẾP CẬN TẦM XA: ${mobName} (${Math.round(distToTarget)}px -> ${approachStop}px)`);
         }
       } else {
         stopMoving();
@@ -3141,7 +3254,9 @@
           } else if (state.isRoadblock) {
             statusTxt.textContent = `🚧 ĐỨNG BẮN DỌN VẬT CẢN: ${mobName} (${Math.round(distToTarget)}px)!`;
           } else {
-            statusTxt.textContent = `🔥 TRỤ CHÂN BẮN TỈA (${Math.round(state.dMin)}px): XẢ FULL SKILL!`;
+            statusTxt.textContent = isPlayerMelee
+              ? `⚔️ CẬN CHIẾN CHÉM LIÊN HOÀN (${Math.round(distToTarget)}px): XẢ FULL SKILL!`
+              : `🏹 TRỤ CHÂN XẢ CHIÊU TẦM XA (${Math.round(distToTarget)}px): XẢ FULL SKILL!`;
           }
         }
       }
