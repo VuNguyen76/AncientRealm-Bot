@@ -1402,6 +1402,9 @@
           <span>Né vung: <b id="sm-s-dodge" style="color: #81c784;">0</b></span>
           <span>Giữ Leash: <b id="sm-s-leash" style="color: #ff5252;">0</b></span>
         </div>
+        <button id="sm-btn-sync-apk" title="Chuyển mã phiên đăng nhập Google vào App APK Cổ Giới Auto" style="margin-top: 5px; width: 100%; background: #1565c0; border: 1px solid #42a5f5; color: #fff; border-radius: 4px; padding: 4px; font-size: 10.5px; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 5px;">
+          📲 Chuyển Phiên Vào App APK (Tự Đồng Bộ)
+        </button>
       </div>
     </div>
   `;
@@ -1428,6 +1431,20 @@
   const botMiniEl = botMiniBadge.firstElementChild;
   makeDraggable(botPanelEl, botPanel.querySelector('#sm-header'), 'ancient_bot_panel_pos');
   makeDraggable(botMiniEl, botMiniEl, 'ancient_bot_mini_pos');
+
+  // Sync to APK handler
+  const btnSyncApk = botPanel.querySelector('#sm-btn-sync-apk');
+  if (btnSyncApk) {
+    btnSyncApk.onclick = () => {
+      const token = localStorage.getItem('dainam_session');
+      if (!token) {
+        alert('Chưa có mã phiên đăng nhập (dainam_session)! Vui lòng đăng nhập Google trước.');
+        return;
+      }
+      try { navigator.clipboard?.writeText(token.trim()); } catch(e){}
+      location.href = 'ancientrealm://auth?token=' + encodeURIComponent(token.trim());
+    };
+  }
 
   // Auto-Shop Event Handlers
   const chkAutoShop = botPanel.querySelector('#sm-toggle-autoshop');
