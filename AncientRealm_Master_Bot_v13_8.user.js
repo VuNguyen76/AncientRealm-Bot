@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Ancient Realm - Master Bot v14.2 (Role Đánh Gần & Xa, CoViet Auto-Quest & Kho)
+// @name         Ancient Realm - Master Bot v14.3 (Kiểm Tra Bản Đồ & Hòa Hợp Auto-Quest/Cày Quái)
 // @namespace    http://tampermonkey.net/
-// @version      14.2.0
-// @description  Hệ thống chuẩn hóa 2 Role Đánh Gần (Melee ~80px) & Đánh Xa (Ranged ~260px thả diều), Auto-Quest thông minh, Tự cất đồ kho Thủ Kho, Nạp 100 bình máu, 60 FPS Canvas.
+// @version      14.3.0
+// @description  Kiểm tra cổng bản đồ (cấp/Q/vật phẩm), đồng bộ layout runtime, triệt tiêu xung đột giữa Auto-Quest & Auto-Cày, phân định 2 Role Đánh Gần & Đánh Xa.
 // @author       Antigravity
 // @match        *://ancientrealm.online/*
 // @match        *://*.ancientrealm.online/*
@@ -264,6 +264,7 @@
   const cfg = {
     enabled: true,
     combatRole: 'auto', // 'auto': Tự nhận diện môn phái, 'melee': Đánh gần (cận chiến), 'ranged': Đánh xa (thả diều)
+    farmMob: 'all', // Quái người chơi chỉ định cày (Tách biệt hoàn toàn, không bao giờ bị ghi đè bởi nhiệm vụ)
     targetMob: 'all',
     autoLoot: true,
     lootRadius: 320,
@@ -657,6 +658,37 @@
   // ==========================================
   // HỆ THỐNG CHỌN MỤC TIÊU & PHÁ VÂY (CHUẨN FOCUS & CHỐNG ĐỔI MỤC TIÊU LUNG TUNG)
   // ==========================================
+  // =========================================================================
+  // BỘ PHỐI HỢP MỤC TIÊU CÀY & NHIỆM VỤ (ZERO-CONFLICT HARMONY ENGINE)
+  // - Khi làm nhiệm vụ (kill / collect): Tự động ưu tiên săn quái của nhiệm vụ.
+  // - Khi không làm nhiệm vụ (hoặc xong Q / đi gặp NPC): Giữ nguyên 100% mục tiêu cày của người chơi.
+  // =========================================================================
+  function getActiveTargetFilter() {
+    // 1. ƯU TIÊN SỐ 1: BƯỚC NHIỆM VỤ ĐANG CẦN DIỆT QUÁI HOẶC THU THẬP ĐỒ
+    if (cfg.autoQuest && questState.active && questState.targetMobs && questState.targetMobs.size > 0) {
+      return {
+        type: 'quest',
+        matches: (kind, id) => questState.targetMobs.has(kind) || questState.targetMobs.has(id),
+        getMatchingSpawns: (spawns) => spawns.filter(s => questState.targetMobs.has(s.mob)),
+        label: Array.from(questState.targetMobs).map(k => getMobDef({ kind: k })?.name || k).join('/')
+      };
+    }
+
+    // 2. MỤC TIÊU CÀY DO NGƯỜI CHƠI CHỌN TRÊN GIAO DIỆN (TÁCH BIỆT HOÀN TOÀN)
+    const farmTarget = cfg.farmMob || cfg.targetMob;
+    if (farmTarget && farmTarget !== 'all') {
+      return {
+        type: 'farm',
+        matches: (kind, id) => kind === farmTarget || id === farmTarget || (farmTarget.startsWith('player_') && id === parseInt(farmTarget.replace('player_', ''))),
+        getMatchingSpawns: (spawns) => spawns.filter(s => s.mob === farmTarget),
+        label: farmTarget
+      };
+    }
+
+    // 3. Không lọc (Đánh mọi quái)
+    return null;
+  }
+
   function resolveTargetAndState(me) {
     disableNativeAutoFight();
     const allMobs = window.GAME?.mobs ? Array.from(window.GAME.mobs.values()).filter(m => !(m.st & 1) && m.hp > 0) : [];
@@ -745,16 +777,16 @@
     pursuers.sort((a, b) => a.dist - b.dist);
 
     // ==========================================
-    // 1. KHI NGƯỜI DÙNG LỌC QUÁI CỤ THỂ (cfgTarget !== 'all')
-    // TUYỆT ĐỐI KHÔNG BỊ CƯỚP FOCUS BỞI BẤT KỲ QUÁI NÀO KHÁC!
+    // 1. MỤC TIÊU CÀY & NHIỆM VỤ (PHỐI HỢP THÔNG MINH, KHÔNG BAO GIỜ XUNG ĐỘT)
     // ==========================================
-    if (cfgTarget !== 'all') {
+    const targetFilter = getActiveTargetFilter();
+    if (targetFilter) {
       let lockedTarget = null;
       if (currentTargetId) {
         const cur = allMobs.find(m => m.id === currentTargetId);
         if (cur && !(cur.st & 1) && cur.hp > 0) {
           const dCur = Math.hypot(cur.x - me.x, cur.y - me.y);
-          const matches = (cur.kind === cfgTarget || getMobDef(cur)?.id === cfgTarget || (cfgTarget.startsWith('player_') && cur.id === parseInt(cfgTarget.replace('player_',''))));
+          const matches = targetFilter.matches(cur.kind, getMobDef(cur)?.id);
           if (dCur <= 750 && matches) {
             lockedTarget = cur;
           }
@@ -766,6 +798,7 @@
         const def = getMobDef(lockedTarget);
         return {
           target: lockedTarget,
+          isQuestTarget: targetFilter.type === 'quest',
           dMin: dMin === Infinity ? d : dMin,
           closestMob: closestMob || lockedTarget,
           pursuers: pursuers.map(p => p.mob),
@@ -776,8 +809,8 @@
         };
       }
 
-      // Chưa có mục tiêu khóa: Tìm con quái đúng loại lọc gần nhất
-      const matchingMobs = allMobs.filter(m => m.kind === cfgTarget || getMobDef(m)?.id === cfgTarget);
+      // Chưa có mục tiêu khóa: Tìm con quái đúng loại hợp lệ gần nhất
+      const matchingMobs = allMobs.filter(m => targetFilter.matches(m.kind, getMobDef(m)?.id));
       if (matchingMobs.length > 0) {
         matchingMobs.sort((a, b) => Math.hypot(a.x - me.x, a.y - me.y) - Math.hypot(b.x - me.x, b.y - me.y));
         const newTarget = matchingMobs[0];
@@ -790,6 +823,7 @@
         const def = getMobDef(newTarget);
         return {
           target: newTarget,
+          isQuestTarget: targetFilter.type === 'quest',
           dMin: dMin === Infinity ? d : dMin,
           closestMob: closestMob || newTarget,
           pursuers: pursuers.map(p => p.mob),
@@ -800,14 +834,15 @@
         };
       }
 
-      // Quái đã lọc chưa xuất hiện: Tìm bãi spawn của quái đó và chạy thẳng đến bãi!
-      const matchingSpawns = spawns.filter(s => s.mob === cfgTarget);
+      // Quái đúng loại chưa xuất hiện: Tìm bãi spawn của quái đó và chạy thẳng đến bãi!
+      const matchingSpawns = targetFilter.getMatchingSpawns(spawns);
       if (matchingSpawns.length > 0) {
         matchingSpawns.sort((a, b) => Math.hypot(a.x - me.x, a.y - me.y) - Math.hypot(b.x - me.x, b.y - me.y));
         const targetSpawn = matchingSpawns[0];
         currentTargetId = null;
         return {
           target: null,
+          isQuestTarget: targetFilter.type === 'quest',
           navigatingSpawn: targetSpawn,
           dMin: dMin === Infinity ? 999 : dMin,
           closestMob,
@@ -819,10 +854,11 @@
         };
       }
 
-      // Không tìm thấy bãi quái này trên map
+      // Không tìm thấy bãi quái này trên map hiện tại
       currentTargetId = null;
       return {
         target: null,
+        isQuestTarget: targetFilter.type === 'quest',
         dMin: dMin === Infinity ? 999 : dMin,
         closestMob,
         pursuers: pursuers.map(p => p.mob),
@@ -1150,18 +1186,86 @@
     statusText: 'Sẵn sàng'
   };
 
-  function isPortalLocked(p) {
+  // =========================================================================
+  // HỆ THỐNG KIỂM TRA BẢN ĐỒ & ĐỊNH TUYẾN CỔNG AN TOÀN (HỌC TỪ COVIET TRAVEL & NAV)
+  // =========================================================================
+  function getPortalBlockReason(p) {
     const self = window.GAME?.self;
-    if (!self) return false;
-    if (p.reqLv && (self.lv || 1) < p.reqLv) return true;
+    if (!self) return null;
+
+    // 1. Kiểm tra cấp độ yêu cầu (reqLv)
+    if (p.reqLv && (self.lv || 1) < p.reqLv) {
+      return `Cần cấp độ ${p.reqLv}`;
+    }
+
+    // 2. Kiểm tra tiến độ nhiệm vụ (reqQuest - Chuẩn hóa theo CoViet questReached)
     if (p.reqQuest) {
       const parts = p.reqQuest.split(':');
-      const qid = parts[0], qstep = +(parts[1] || 0);
-      const q = self.quests?.[qid];
-      if (!q || q.step < qstep) return true;
+      const qid = parts[0], reqStep = +(parts[1] || 0);
+
+      // Đã hoàn thành nhiệm vụ này trong quá khứ?
+      const doneQuests = self.quests?.done || [];
+      const isDone = doneQuests.includes(qid) || (self.quest?.done && self.quest.id === qid);
+      if (!isDone) {
+        // Tìm trong danh sách nhiệm vụ đang làm
+        const list = self.quests?.list || (self.quest ? [self.quest] : []);
+        const activeQ = list.find(q => q && q.id === qid);
+        if (!activeQ) {
+          return `Cần nhiệm vụ ${qid}`;
+        }
+        if (activeQ.step < reqStep) {
+          return `Cần nhiệm vụ ${qid} bước ${reqStep}`;
+        }
+      }
     }
-    if (p.req && !(self.inv || []).some(s => s?.id === p.req)) return true;
-    return false;
+
+    // 3. Kiểm tra vật phẩm / chìa khóa bắt buộc (req)
+    if (p.req) {
+      const inv = self.inv || [];
+      const hasItem = inv.some(s => s && s.id === p.req);
+      if (!hasItem) {
+        return p.reqMsg || `Cần vật phẩm ${p.req}`;
+      }
+    }
+
+    return null; // Cổng hoàn toàn mở, đi được an toàn!
+  }
+
+  function isPortalLocked(p) {
+    return getPortalBlockReason(p) !== null;
+  }
+
+  // Cập nhật tọa độ cổng & NPC thời gian thực từ engine vào GD.zones (Học từ CoViet applyLayout)
+  function syncZoneLayout() {
+    const worldZone = window.GAME?.world?.zone;
+    const GD = window.GAME?.GD;
+    if (!worldZone || !worldZone.id || !GD?.zones) return;
+    const zData = GD.zones[worldZone.id] || GD.zones.zones?.[worldZone.id];
+    if (!zData) return;
+
+    if (Array.isArray(worldZone.portals)) {
+      if (!zData.portals) zData.portals = [];
+      for (const liveP of worldZone.portals) {
+        const cachedP = zData.portals.find(p => p.to === liveP.to);
+        if (cachedP) {
+          Object.assign(cachedP, { x: liveP.x, y: liveP.y, r: liveP.r || cachedP.r });
+        } else {
+          zData.portals.push({ ...liveP });
+        }
+      }
+    }
+
+    if (Array.isArray(worldZone.npcs)) {
+      if (!zData.npcs) zData.npcs = [];
+      for (const liveNpc of worldZone.npcs) {
+        const cachedNpc = zData.npcs.find(n => n.id === liveNpc.id);
+        if (cachedNpc) {
+          Object.assign(cachedNpc, { x: liveNpc.x, y: liveNpc.y });
+        } else {
+          zData.npcs.push({ ...liveNpc });
+        }
+      }
+    }
   }
 
   function safeMapRoute(fromZone, toZone) {
@@ -1171,9 +1275,10 @@
     const prev = { [fromZone]: null }, q = [fromZone];
     while (q.length && !(toZone in prev)) {
       const id = q.shift();
-      for (const p of GD.zones[id]?.portals || []) {
+      const zPortals = GD.zones[id]?.portals || [];
+      for (const p of zPortals) {
         if (isPortalLocked(p)) continue;
-        if (!(p.to in prev)) {
+        if (!(p.to in prev) && GD.zones[p.to]) {
           prev[p.to] = { from: id, to: p.to, portal: p };
           q.push(p.to);
         }
@@ -1480,7 +1585,7 @@
   const questState = {
     active: false,
     currentQuest: null,
-    targetMob: null,
+    targetMobs: null, // Set of mob kinds for current quest
     collectItem: null,
     lastTalkTime: 0,
     statusText: '',
@@ -1603,6 +1708,10 @@
 
     // A. BƯỚC NÓI CHUYỆN HOẶC ĐÃ XONG ĐANG TRẢ NHIỆM VỤ (q.ready)
     if (step.type === 'talk' || q.ready) {
+      // Khi đang đi gặp NPC: Tạm dừng chế độ săn quái quest để tập trung di chuyển mượt mà
+      questState.active = false;
+      questState.targetMobs = null;
+      questState.collectItem = null;
       const targetNpcId = q.npc || step.npc;
       const npcLoc = findNpcZoneAndLocation(targetNpcId);
       if (npcLoc) {
@@ -1651,12 +1760,12 @@
     // B. BƯỚC GIẾT QUÁI (kill) HOẶC THU THẬP VẬT PHẨM (collect)
     if (step.type === 'kill' || step.type === 'collect') {
       const mobList = step.type === 'kill' 
-        ? (step.mobs || [step.mob])
-        : (mobsDroppingItem(step.item) || [step.mob]);
+        ? (step.mobs || (step.mob ? [step.mob] : []))
+        : (mobsDroppingItem(step.item) || (step.mob ? [step.mob] : []));
       
-      const targetMobKind = mobList[0];
-      if (targetMobKind) {
-        cfg.targetMob = targetMobKind;
+      if (mobList.length > 0) {
+        questState.active = true;
+        questState.targetMobs = new Set(mobList);
         questState.collectItem = (step.type === 'collect') ? step.item : null;
 
         const targetZone = findZoneForMobs(mobList, curZone);
@@ -1671,10 +1780,15 @@
               const s = calculateDirectSteering(me, p.x, p.y);
               setSteeringVector(s.dx, s.dy);
             }
-            questState.statusText = `📜 Sang ${targetZone} săn quái quest (${targetMobKind})...`;
+            questState.statusText = `📜 Sang ${targetZone} săn quái quest (${mobList.join('/')})...`;
             if (statusTxt) statusTxt.textContent = questState.statusText;
             return true;
           }
+        } else {
+          // Đã ở đúng map có bãi quái quest: Nhường hoàn toàn quyền điều khiển cho combat loop!
+          // Combat loop sẽ dùng getActiveTargetFilter() để tự động khóa đúng quái quest
+          questState.statusText = `⚔️ Săn quái nhiệm vụ: ${mobList.join('/')}`;
+          return false;
         }
       }
       return false;
@@ -1955,7 +2069,7 @@
         if (autoShopState.farmTargetMob && cfg.targetMob !== autoShopState.farmTargetMob) {
           cfg.targetMob = autoShopState.farmTargetMob;
           const mobSel = botPanel.querySelector('#sm-mob-sel');
-          if (mobSel) mobSel.value = cfg.targetMob;
+          if (mobSel) mobSel.value = cfg.farmMob || cfg.targetMob || 'all';
         }
 
         const farmX = autoShopState.farmPos.x;
@@ -2798,7 +2912,11 @@
   }
 
   populateMobSelect();
-  mobSel.onchange = e => cfg.targetMob = e.target.value;
+  mobSel.onchange = e => {
+    cfg.farmMob = e.target.value;
+    cfg.targetMob = e.target.value;
+    console.log(`[BOT] Đã chọn mục tiêu cày: '${cfg.farmMob}'`);
+  };
   botPanel.querySelector('#sm-btn-refresh-mobs').onclick = populateMobSelect;
 
   const selCombatRole = botPanel.querySelector('#sm-role-sel');
@@ -2848,6 +2966,9 @@
       lastZoneTransitionTime = now;
       lastArrivedPortalCoords = { x: me.x, y: me.y };
 
+      // Đồng bộ thời gian thực layout map (tọa độ cổng, NPC thật từ server)
+      syncZoneLayout();
+
       // Chống trôi nhân vật, reset phím di chuyển & trạng thái kẹt
       stopMoving();
       movementState = 'STAND';
@@ -2874,7 +2995,7 @@
       if (autoShopState.active && autoShopState.farmZone === zone.id && autoShopState.farmTargetMob) {
         cfg.targetMob = autoShopState.farmTargetMob;
         const mobSel = botPanel.querySelector('#sm-mob-sel');
-        if (mobSel) mobSel.value = cfg.targetMob;
+        if (mobSel) mobSel.value = cfg.farmMob || cfg.targetMob || 'all';
         console.log(`[BOT] Về lại map farm (${zone.id}), giữ nguyên focus quái: '${cfg.targetMob}'`);
       } else if (!autoShopState.active && cfg.targetMob !== 'all') {
         // KHÔNG BAO GIỜ tự động reset mục tiêu lọc của người chơi về 'all' khi chuyển map!

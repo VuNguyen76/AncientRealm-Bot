@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Ancient Realm - Master Bot v14.2 (Role Đánh Gần & Xa, Auto-Quest & Kho)",
-  "version": "14.2.0",
-  "description": "Chuẩn hóa 2 Role Đánh Gần & Đánh Xa, Auto-Quest nhận/làm/trả, Bộ lọc bán đồ rác chi tiết, Tự cất đồ kho Thủ Kho, Nạp 100 bình máu, 60 FPS Canvas.",
+  "name": "Ancient Realm - Master Bot v14.3 (Kiểm Tra Bản Đồ & Auto-Quest Hòa Hợp)",
+  "version": "14.3.0",
+  "description": "Kiểm tra cổng bản đồ thông minh, đồng bộ layout thời gian thực, tách biệt cày quái & nhiệm vụ không xung đột, chuẩn hóa 2 Role Đánh Gần/Xa.",
   "author": "Antigravity",
   "icons": {
     "48": "icon48.png",
