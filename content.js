@@ -799,6 +799,7 @@
   }
 
   let lastAtkTime = 0;
+  let lastTgSentTime = 0;
   let localCastUntil = 0;
 
   function executeOracleAttack(target, now, distToTarget, dMin, closestMob, pursuerCount, isEmergencyBreakout, isPvP) {
@@ -820,9 +821,10 @@
     const ny = Math.round((dy / len) * 100) / 100;
 
     me.facing = dx >= 0 ? 1 : -1;
-    if (target.id !== lastTargetIdSent) {
+    if (target.id !== lastTargetIdSent && (now - lastTgSentTime >= 250)) {
       window.GAME.net.send({ t: 'tg', id: target.id });
       lastTargetIdSent = target.id;
+      lastTgSentTime = now;
       if (window.GAME) {
         window.GAME.lockId = target.id;
         window.GAME.targetId = target.id;
@@ -843,7 +845,8 @@
           ? ((self?.hp || 1) / (self?.maxHp || 1) < 0.75 || isEmergencyBreakout)
           : (distToTarget <= 320 || dMin <= 240 || isEmergencyBreakout || isPvP);
 
-        if (now - lastCast >= cd + 50 && currentMp >= (skDef.mp || 0) && needBuff) {
+        const isReadyByGame = window.GAME?.ui?.ready ? window.GAME.ui.ready(skId) : true;
+        if (isReadyByGame && (now - lastCast >= cd + 50) && currentMp >= (skDef.mp || 0) && needBuff) {
           window.GAME.net.send({ t: 'sk', s: skId, id: 0, x: 0, y: 0 });
           skillTimers[skId] = now;
           devState.totalSkills++;
@@ -880,7 +883,8 @@
       const skRange = skDef.range || baseRange;
       const castTime = skDef.cast || 0;
 
-      if (now - lastCast >= cd + 50 && currentMp >= (skDef.mp || 0) && distToTarget <= skRange + targetRadius + 8) {
+      const isReadyByGame = window.GAME?.ui?.ready ? window.GAME.ui.ready(skId) : true;
+      if (isReadyByGame && (now - lastCast >= cd + 50) && currentMp >= (skDef.mp || 0) && distToTarget <= skRange + targetRadius + 8) {
         if (castTime > 0 && !isSafeForCastTime && !isEmergencyBreakout) {
           continue; // Bỏ qua chiêu có thời gian niệm nếu quái đang áp sát đánh trúng
         }
@@ -896,8 +900,8 @@
       }
     }
 
-    // 4. ĐÒN ĐÁNH CƠ BẢN (AUTO-ATTACK)
-    const atkCd = clsData.atkMs ? Math.max(300, clsData.atkMs * 0.45) : 380;
+    // 4. ĐÒN ĐÁNH CƠ BẢN (AUTO-ATTACK): Đồng bộ chuẩn nhịp server để tránh bị máy chủ đá văng
+    const atkCd = clsData.atkMs ? Math.max(550, clsData.atkMs * 0.85) : 600;
     if (now - lastAtkTime >= atkCd && distToTarget <= baseRange + targetRadius + 8) {
       window.GAME.net.send({ t: 'atk', id: target.id, x: nx, y: ny });
       lastAtkTime = now;
