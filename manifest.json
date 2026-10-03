@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Ancient Realm - Master Bot v13.9.7 (Auto 100 Potions & Perfect Focus)",
-  "version": "13.9.7",
-  "description": "Nạp 100 bình máu, chống mất focus quái khi đổi khu vực, tối ưu hóa di chuyển né kẹt và xả chiêu chuẩn hitbox.",
+  "name": "Ancient Realm - Master Bot v14.0 (Cyber UI & 60 FPS Canvas Optimizer)",
+  "version": "14.0.0",
+  "description": "Giao diện Tab Cyberpunk siêu gọn, tối ưu Canvas 60 FPS ẩn hitbox đỏ, nạp 100 bình máu, khóa mục tiêu chống mất focus.",
   "author": "Antigravity",
   "icons": {
     "48": "icon48.png",

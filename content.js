@@ -151,72 +151,6 @@
     }
   }
 
-  // TIỆN ÍCH HỖ TRỢ ĐĂNG NHẬP (TRÊN CẢ CHROME & APK MOBILE)
-  (function initLoginHelper() {
-    if (document.getElementById('apk-login-helper')) return;
-    const box = document.createElement('div');
-    box.id = 'apk-login-helper';
-    box.style.cssText = 'position:fixed;bottom:14px;right:14px;z-index:9999999;display:flex;gap:8px;align-items:center;';
-    box.innerHTML = `
-      <button id="apk-btn-chrome" style="background:linear-gradient(135deg,#00e676,#00b0ff);border:none;border-radius:20px;padding:8px 14px;color:#000;font-weight:bold;font-size:12px;box-shadow:0 3px 10px rgba(0,0,0,0.5);cursor:pointer;">🌐 Mở Chrome Đăng Nhập</button>
-      <button id="apk-btn-paste" style="background:rgba(0,0,0,0.6);border:1px solid #00e676;border-radius:20px;padding:8px 14px;color:#fff;font-weight:bold;font-size:12px;cursor:pointer;">📋 Dán Mã Phiên</button>
-    `;
-    document.body.appendChild(box);
-
-    const btnChrome = box.querySelector('#apk-btn-chrome');
-    const btnPaste = box.querySelector('#apk-btn-paste');
-
-    if (btnChrome) {
-      btnChrome.onclick = () => {
-        if (window.AndroidBridge && window.AndroidBridge.openChromeLogin) {
-          window.AndroidBridge.openChromeLogin();
-        } else {
-          window.open('https://ancientrealm.online/?debug', '_blank');
-        }
-      };
-    }
-
-    if (btnPaste) {
-      btnPaste.onclick = () => {
-        if (window.AndroidBridge && window.AndroidBridge.promptPasteToken) {
-          window.AndroidBridge.promptPasteToken();
-        } else {
-          const t = prompt('Dán mã phiên (bắt đầu bằng s.):');
-          if (t && t.trim()) {
-            localStorage.setItem('dainam_session', t.trim());
-            location.reload();
-          }
-        }
-      };
-    }
-
-    const checkHud = setInterval(() => {
-      const hud = document.getElementById('hud');
-      if (hud && !hud.hidden) {
-        box.style.display = 'none';
-        clearInterval(checkHud);
-      }
-    }, 800);
-  })();
-
-  // NẾU ĐANG CHẠY TRONG TRÌNH DUYỆT CHROME NGOÀI VÀ ĐÃ ĐĂNG NHẬP:
-  (function initChromeToApkExporter() {
-    if (window.AndroidBridge) return; // Đang ở trong app APK rồi
-    const sessionToken = localStorage.getItem('dainam_session');
-    if (!sessionToken) return;
-
-    if (document.getElementById('chrome-to-apk-btn')) return;
-    const btn = document.createElement('button');
-    btn.id = 'chrome-to-apk-btn';
-    btn.style.cssText = 'position:fixed;bottom:14px;right:14px;z-index:9999999;background:linear-gradient(135deg,#ff9100,#ff3d00);border:none;border-radius:20px;padding:8px 16px;color:#fff;font-weight:bold;font-size:12px;box-shadow:0 4px 12px rgba(0,0,0,0.6);cursor:pointer;';
-    btn.textContent = '🚀 Mở App Cổ Giới Auto (Chuyển Phiên)';
-    btn.onclick = () => {
-      navigator.clipboard.writeText(sessionToken).catch(() => {});
-      window.location.href = 'ancientrealm://auth?token=' + encodeURIComponent(sessionToken);
-    };
-    document.body.appendChild(btn);
-  })();
-
   boot();
 
   function runBotEngine() {
@@ -1520,106 +1454,148 @@
   const botPanel = document.createElement('div');
   botPanel.id = 'ancient-master-bot-v13';
   botPanel.innerHTML = `
-    <div style="position: fixed; top: 75px; right: 15px; width: 330px; background: rgba(14, 18, 26, 0.92);
-                border: 1.5px solid #00e676; border-radius: 9px; color: #e6dfd3; font-family: 'Segoe UI', Tahoma, sans-serif;
-                font-size: 11.5px; z-index: 999999; box-shadow: 0 8px 32px rgba(0,0,0,0.85); backdrop-filter: blur(10px);
-                transition: transform 0.15s ease, opacity 0.15s ease;">
+    <div style="position: fixed; top: 12px; right: 12px; width: 300px; max-width: calc(100vw - 24px); max-height: calc(100vh - 24px);
+                background: rgba(10, 14, 23, 0.95); border: 1.5px solid #00e676; border-radius: 12px; color: #e0e6ed;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+                font-size: 11.5px; z-index: 999999; box-shadow: 0 10px 35px rgba(0,0,0,0.85), 0 0 15px rgba(0,230,118,0.25);
+                backdrop-filter: blur(14px); display: none; flex-direction: column; overflow: hidden; user-select: none;">
       <!-- Header Drag Handle -->
-      <div id="sm-header" style="background: linear-gradient(90deg, #1b5e20, #2e7d32); padding: 6px 10px;
-                  cursor: grab; font-weight: bold; color: #fff; display: flex; justify-content: space-between;
-                  align-items: center; border-top-left-radius: 7px; border-top-right-radius: 7px; user-select: none;">
-        <div style="display: flex; align-items: center; gap: 6px;">
-          <span>🔮 BOT v13.9 (SMART AUTO-SELL, POTION REFILL & RETURN FARM)</span>
+      <div id="sm-header" style="background: linear-gradient(90deg, #0d2818, #04471c); padding: 8px 12px;
+                  cursor: grab; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(0,230,118,0.3);">
+        <div style="display: flex; align-items: center; gap: 7px; font-weight: bold; font-size: 12px; color: #fff;">
+          <span style="font-size: 14px;">🤖</span>
+          <span style="background: linear-gradient(90deg, #00e676, #00b0ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 800; letter-spacing: 0.5px;">CỔ GIỚI BOT v14</span>
+          <span style="background: rgba(0,230,118,0.2); border: 1px solid #00e676; color: #00e676; font-size: 9px; padding: 1px 5px; border-radius: 8px; font-weight: 700;">60 FPS</span>
         </div>
-        <div style="display: flex; gap: 5px; align-items: center;">
-          <button id="sm-btn-min" title="Thu gọn giao diện" style="background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25); color: #fff; border-radius: 3px; cursor: pointer; width: 20px; height: 18px; font-size: 11px; line-height: 1; display: flex; align-items: center; justify-content: center;">—</button>
-          <button id="sm-btn-close" title="Tắt bot" style="background: none; border: none; color: #ff6b6b; cursor: pointer; font-size: 14px; font-weight: bold; line-height: 1; padding: 0 3px;">✕</button>
+        <div style="display: flex; gap: 6px; align-items: center;">
+          <button id="sm-btn-min" title="Thu gọn" style="background: rgba(255,255,255,0.12); border: none; color: #fff; border-radius: 4px; cursor: pointer; width: 22px; height: 20px; font-size: 12px; font-weight: bold; line-height: 1; display: flex; align-items: center; justify-content: center;">_</button>
+          <button id="sm-btn-close" title="Đóng panel" style="background: rgba(255,68,68,0.2); border: 1px solid rgba(255,68,68,0.4); color: #ff5252; border-radius: 4px; cursor: pointer; width: 22px; height: 20px; font-size: 12px; font-weight: bold; line-height: 1; display: flex; align-items: center; justify-content: center;">✕</button>
         </div>
       </div>
 
-      <!-- Main Body -->
-      <div id="sm-body" style="padding: 8px 10px; display: flex; flex-direction: column; gap: 6px;">
-        <button id="sm-btn-toggle" style="background: #2e7d32; border: 1px solid #4caf50; color: #fff;
-                    font-weight: bold; padding: 5px; border-radius: 4px; cursor: pointer; font-size: 11.5px;">
-          🟢 ĐANG HOẠT ĐỘNG
+      <!-- Master Switch Bar -->
+      <div style="padding: 7px 10px; background: rgba(0,0,0,0.3); border-bottom: 1px solid rgba(255,255,255,0.06); display: flex; gap: 8px; align-items: center;">
+        <button id="sm-btn-toggle" style="flex: 1; padding: 7px; background: linear-gradient(135deg, #1b5e20, #00c853); border: none; border-radius: 6px; color: #fff; font-weight: bold; font-size: 12px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,200,83,0.3); display: flex; align-items: center; justify-content: center; gap: 6px;">
+          🟢 AUTO: ĐANG CHẠY
         </button>
+      </div>
 
-        <!-- Status Card -->
-        <div style="background: rgba(24,30,42,0.85); border: 1px solid #37474f; padding: 6px 8px; border-radius: 5px; font-size: 11px; display: flex; flex-direction: column; gap: 2px;">
-          <div style="color: #ffd76a;">Trạng thái: <b id="sm-st-txt">Khởi tạo...</b></div>
-          <div style="color: #4fc3f7;">Mục tiêu: <b id="sm-target-txt">None</b></div>
-          <div style="color: #ff8a80;">Cự ly d_min: <b id="sm-dmin-txt">0px</b> | Quái bám: <b id="sm-pursuers-txt">0</b></div>
-          <div style="color: #ce93d8;">📡 Đo gói tin: <b id="sm-measured-atk">Đang theo dõi...</b></div>
-          <div style="color: #81c784;">🎁 Đã nhặt: <b id="sm-s-loot">0 món</b></div>
-          <div style="color: #ffca28; border-top: 1px dashed rgba(255,202,40,0.3); padding-top: 2px; margin-top: 2px;">
-            🛒 Auto-Shop (100 bình): <b id="sm-shop-status">Sẵn sàng</b> | Bán: <b id="sm-trash-sold" style="color: #69f0ae;">0</b> | Mua: <b id="sm-potions-bought" style="color: #40c4ff;">0</b>
-          </div>
-        </div>
+      <!-- Navigation Tabs -->
+      <div id="sm-nav-tabs" style="display: flex; background: rgba(0,0,0,0.4); border-bottom: 1px solid rgba(0,230,118,0.2); padding: 4px 6px; gap: 4px;">
+        <button class="sm-tab-btn active" data-tab="combat" style="flex: 1; padding: 5px 2px; background: rgba(0,230,118,0.18); border: 1px solid #00e676; border-radius: 6px; color: #00e676; font-size: 10.5px; font-weight: bold; cursor: pointer;">⚔️ Chiến Đấu</button>
+        <button class="sm-tab-btn" data-tab="skills" style="flex: 1; padding: 5px 2px; background: rgba(255,255,255,0.05); border: 1px solid transparent; border-radius: 6px; color: #8b949e; font-size: 10.5px; font-weight: bold; cursor: pointer;">⚡ Chiêu Thức</button>
+        <button class="sm-tab-btn" data-tab="shop" style="flex: 1; padding: 5px 2px; background: rgba(255,255,255,0.05); border: 1px solid transparent; border-radius: 6px; color: #8b949e; font-size: 10.5px; font-weight: bold; cursor: pointer;">🛒 Bán & Tiện Ích</button>
+      </div>
 
-        <!-- Auto-Shop & Potion Refill Controller -->
-        <div style="background: rgba(30, 24, 15, 0.85); border: 1px solid #ffb300; padding: 5px 8px; border-radius: 5px; display: flex; justify-content: space-between; align-items: center;">
-          <label style="display: flex; align-items: center; gap: 5px; cursor: pointer; color: #ffe082; font-size: 10.5px; user-select: none;">
-            <input type="checkbox" id="sm-toggle-autoshop" ${cfg.autoShop ? 'checked' : ''} style="cursor: pointer;">
-            <span>🛒 Tự Bán Đồ & Nạp 100 Bình Máu</span>
-          </label>
-          <button id="sm-btn-force-shop" title="Bắt đầu ngay chuyến đi bán đồ" style="background: #e65100; border: 1px solid #ff9800; color: #fff; border-radius: 3px; font-size: 9.5px; padding: 2px 7px; cursor: pointer; font-weight: bold;">Đi Bán Ngay</button>
-        </div>
-
-        <!-- Loadout Switcher -->
-        <div style="background: rgba(18,32,45,0.85); border: 1px solid #00b0ff; padding: 6px 8px; border-radius: 5px;">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-            <span style="font-weight: bold; color: #80d8ff; font-size: 11px;">🎯 ĐỔI BUILD KỸ NĂNG:</span>
-            <button id="sm-btn-open-chat" style="background: #3e2723; border: 1px solid #ffb300; color: #ffd76a; border-radius: 3px; font-size: 10px; padding: 2px 7px; cursor: pointer; font-weight: bold;">💬 Khung Chat</button>
-          </div>
-          <div style="display: grid; grid-template-columns: 1fr; gap: 3px;">
-            <button id="sm-b-dual-hidden" style="background: #004d40; border: 1px solid #00bfa5; color: #a7ffeb; padding: 3px; border-radius: 3px; cursor: pointer; font-size: 10px; font-weight: bold;">
-              👑 Song Ẩn: [Lôi Phù + Thủy Kính (Ẩn) + Thiên Lôi (Ẩn)]
-            </button>
-            <button id="sm-b-burst-stun" style="background: #1a237e; border: 1px solid #3d5afe; color: #8c9eff; padding: 3px; border-radius: 3px; cursor: pointer; font-size: 10px; font-weight: bold;">
-              ⚡ Khống Chế Sốc Dmg: [Lôi Phù + Thiên Lôi + Ngũ Hành]
-            </button>
-            <button id="sm-b-aoe-farm" style="background: #b71c1c; border: 1px solid #ff5252; color: #ff8a80; padding: 3px; border-radius: 3px; cursor: pointer; font-size: 10px; font-weight: bold;">
-              🔥 Càn Quét Bãi: [Lôi Phù + Hỏa Long + Thiên Lôi]
-            </button>
-          </div>
-          <div id="sm-loadout-cur" style="color: #ffd54f; font-size: 9.5px; margin-top: 3px;">Ô đang trang bị: Đang nạp...</div>
-        </div>
-
-        <!-- Collapsible Details: Stats -->
-        <details style="background: rgba(20,25,35,0.85); border: 1px solid #3d5afe; border-radius: 5px; padding: 4px 6px;">
-          <summary style="font-weight: bold; color: #82b1ff; font-size: 10.5px; cursor: pointer; user-select: none;">⚡ Bảng Thống Kê Chiêu Thức</summary>
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 3px; font-size: 10px; margin-top: 4px;">
-            <div>⚡ Lôi Phù (2s): <b id="sm-sk-loiphu" style="color: #ffd54f;">0</b></div>
-            <div>🔥 Hỏa Long (7s): <b id="sm-sk-hoalong" style="color: #ff7043;">0</b></div>
-            <div>🌀 Ngũ Hành (20s): <b id="sm-sk-nguhanh" style="color: #ab47bc;">0</b></div>
-            <div>🛡️ Thủy Kính [Ẩn]: <b id="sm-sk-thuykinh" style="color: #29b6f6;">0</b></div>
-            <div style="grid-column: span 2;">⚡⚡ Thiên Lôi [Ẩn]: <b id="sm-sk-thienloi" style="color: #ffff00;">0</b></div>
-          </div>
-        </details>
-
-        <!-- Collapsible Details: Mob Select -->
-        <details open style="background: rgba(40,30,20,0.85); border: 1px solid #7c6145; border-radius: 5px; padding: 4px 6px;">
-          <summary style="font-weight: bold; color: #ffd76a; font-size: 10.5px; cursor: pointer; user-select: none; display: flex; justify-content: space-between; align-items: center;">
-            <span>🎯 CHỌN QUÁI CẦN ĐÁNH</span>
-          </summary>
-          <div style="display: flex; gap: 4px; margin-top: 4px;">
-            <select id="sm-mob-sel" style="flex: 1; background: #1a120b; color: #6fdc6f; border: 1px solid #5a4530; padding: 3px 5px; border-radius: 4px; font-size: 10.5px; cursor: pointer;">
+      <!-- Scrollable Tab Content Container -->
+      <div style="flex: 1; overflow-y: auto; max-height: 290px; padding: 8px 10px; display: flex; flex-direction: column; gap: 7px; scrollbar-width: thin; scrollbar-color: #00e676 rgba(0,0,0,0.3);">
+        <!-- TAB 1: CHIẾN ĐẤU -->
+        <div id="sm-tab-combat" class="sm-tab-content" style="display: flex; flex-direction: column; gap: 7px;">
+          <!-- Target Selection Card -->
+          <div style="background: rgba(19, 24, 34, 0.9); border: 1px solid rgba(255,215,106,0.35); border-radius: 8px; padding: 7px 9px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+              <span style="font-weight: bold; color: #ffd76a; font-size: 10.5px;">🎯 CHỌN QUÁI / BOSS:</span>
+              <button id="sm-btn-refresh-mobs" style="background: rgba(255,215,106,0.15); border: 1px solid #ffd76a; color: #ffd76a; border-radius: 4px; font-size: 9.5px; padding: 2px 7px; cursor: pointer; font-weight: bold;">🔄 Quét</button>
+            </div>
+            <select id="sm-mob-sel" style="width: 100%; background: #0b0f17; color: #69f0ae; border: 1px solid #30363d; padding: 5px 7px; border-radius: 6px; font-size: 10.5px; outline: none; cursor: pointer;">
               <option value="all">🌟 Tự động (Mọi quái trong khu vực)</option>
             </select>
-            <button id="sm-btn-refresh-mobs" style="background: #2a522a; border: 1px solid #4caf50; color: #a5d6a7; border-radius: 3px; font-size: 10px; cursor: pointer; padding: 2px 6px; font-weight: bold;">🔄 Quét</button>
           </div>
-        </details>
 
-        <!-- Telemetry Counters -->
-        <div style="display: flex; justify-content: space-between; font-size: 9.5px; color: #a5d6a7; border-top: 1px solid #37474f; padding-top: 3px;">
-          <span>Đòn đánh: <b id="sm-s-atk" style="color: #ffd54f;">0</b></span>
-          <span>Phá vây: <b id="sm-s-breakout" style="color: #ff9100;">0</b></span>
-          <span>Né vung: <b id="sm-s-dodge" style="color: #81c784;">0</b></span>
-          <span>Giữ Leash: <b id="sm-s-leash" style="color: #ff5252;">0</b></span>
+          <!-- Live Combat Telemetry Card -->
+          <div style="background: rgba(16, 21, 31, 0.9); border: 1px solid rgba(0,176,255,0.3); border-radius: 8px; padding: 7px 9px; display: flex; flex-direction: column; gap: 4px; font-size: 10.5px;">
+            <div style="display: flex; justify-content: space-between;">
+              <span style="color: #8b949e;">Mục tiêu:</span>
+              <b id="sm-target-txt" style="color: #40c4ff;">None</b>
+            </div>
+            <div style="display: flex; justify-content: space-between;">
+              <span style="color: #8b949e;">Hành động:</span>
+              <b id="sm-st-txt" style="color: #ffd76a;">Đang dò tìm...</b>
+            </div>
+            <div style="display: flex; justify-content: space-between;">
+              <span style="color: #8b949e;">Cự ly:</span>
+              <div><b id="sm-dmin-txt" style="color: #ff5252;">0px</b> <span style="color: #8b949e;">| Bám đuổi:</span> <b id="sm-pursuers-txt" style="color: #ff9100;">0</b></div>
+            </div>
+            <div style="display: flex; justify-content: space-between; border-top: 1px dashed rgba(255,255,255,0.08); padding-top: 3px; margin-top: 2px;">
+              <span style="color: #8b949e;">Nhặt đồ:</span>
+              <b id="sm-s-loot" style="color: #69f0ae;">0 món</b>
+            </div>
+            <div style="display: flex; justify-content: space-between; font-size: 9.5px; color: #ce93d8;">
+              <span>Tần số đánh:</span>
+              <b id="sm-measured-atk">Đang theo dõi...</b>
+            </div>
+          </div>
+
+          <!-- Quick Metrics Strip -->
+          <div style="display: flex; justify-content: space-between; font-size: 9.5px; color: #8b949e; padding: 0 4px;">
+            <span>Đánh: <b id="sm-s-atk" style="color: #ffd54f;">0</b></span>
+            <span>Phá vây: <b id="sm-s-breakout" style="color: #ff9100;">0</b></span>
+            <span>Né chiêu: <b id="sm-s-dodge" style="color: #69f0ae;">0</b></span>
+            <span>Giữ Leash: <b id="sm-s-leash" style="color: #ff5252;">0</b></span>
+          </div>
         </div>
-        <button id="sm-btn-sync-apk" title="Chuyển mã phiên đăng nhập Google vào App APK Cổ Giới Auto" style="margin-top: 5px; width: 100%; background: #1565c0; border: 1px solid #42a5f5; color: #fff; border-radius: 4px; padding: 4px; font-size: 10.5px; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 5px;">
-          📲 Chuyển Phiên Vào App APK (Tự Đồng Bộ)
-        </button>
+
+        <!-- TAB 2: CHIÊU THỨC & BUILDS -->
+        <div id="sm-tab-skills" class="sm-tab-content" style="display: none; flex-direction: column; gap: 7px;">
+          <div style="font-weight: bold; color: #80d8ff; font-size: 10.5px;">🎯 CHUYỂN BUILD 1-CHẠM:</div>
+          <div style="display: flex; flex-direction: column; gap: 4px;">
+            <button id="sm-b-dual-hidden" style="background: linear-gradient(135deg, #004d40, #00796b); border: 1px solid #00bfa5; color: #e0f2f1; padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 10px; font-weight: bold; text-align: left; display: flex; justify-content: space-between; align-items: center;">
+              <span>👑 Song Ẩn</span>
+              <span style="font-size: 9px; opacity: 0.85;">[Thủy Kính + Thiên Lôi]</span>
+            </button>
+            <button id="sm-b-burst-stun" style="background: linear-gradient(135deg, #1a237e, #283593); border: 1px solid #3d5afe; color: #e8eaf6; padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 10px; font-weight: bold; text-align: left; display: flex; justify-content: space-between; align-items: center;">
+              <span>⚡ Khống Chế Stun</span>
+              <span style="font-size: 9px; opacity: 0.85;">[Thiên Lôi + Ngũ Hành]</span>
+            </button>
+            <button id="sm-b-aoe-farm" style="background: linear-gradient(135deg, #b71c1c, #c62828); border: 1px solid #ff5252; color: #ffebee; padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 10px; font-weight: bold; text-align: left; display: flex; justify-content: space-between; align-items: center;">
+              <span>🔥 Càn Quét Bãi</span>
+              <span style="font-size: 9px; opacity: 0.85;">[Hỏa Long + Thiên Lôi]</span>
+            </button>
+          </div>
+          <div id="sm-loadout-cur" style="color: #ffd54f; font-size: 9.5px; background: rgba(0,0,0,0.3); padding: 5px 8px; border-radius: 4px;">Ô đang trang bị: Đang nạp...</div>
+
+          <!-- Cooldown Stats -->
+          <div style="background: rgba(16, 21, 31, 0.9); border: 1px solid rgba(61,90,254,0.3); border-radius: 8px; padding: 6px 8px; display: grid; grid-template-columns: 1fr 1fr; gap: 3px; font-size: 9.5px;">
+            <div>⚡ Lôi Phù: <b id="sm-sk-loiphu" style="color: #ffd54f;">0</b></div>
+            <div>🔥 Hỏa Long: <b id="sm-sk-hoalong" style="color: #ff7043;">0</b></div>
+            <div>🌀 Ngũ Hành: <b id="sm-sk-nguhanh" style="color: #ab47bc;">0</b></div>
+            <div>🛡️ Thủy Kính: <b id="sm-sk-thuykinh" style="color: #29b6f6;">0</b></div>
+            <div style="grid-column: span 2;">⚡⚡ Thiên Lôi: <b id="sm-sk-thienloi" style="color: #ffff00;">0</b></div>
+          </div>
+        </div>
+
+        <!-- TAB 3: AUTO-SHOP & TIỆN ÍCH -->
+        <div id="sm-tab-shop" class="sm-tab-content" style="display: none; flex-direction: column; gap: 7px;">
+          <!-- Auto-Shop Box -->
+          <div style="background: rgba(28, 22, 13, 0.9); border: 1px solid rgba(255,179,0,0.4); border-radius: 8px; padding: 7px 9px; display: flex; flex-direction: column; gap: 5px;">
+            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; color: #ffe082; font-size: 10.5px; font-weight: bold; user-select: none;">
+              <input type="checkbox" id="sm-toggle-autoshop" ${cfg.autoShop ? 'checked' : ''} style="cursor: pointer; width: 13px; height: 13px;">
+              <span>🛒 Tự Bán Đồ & Nạp 100 Bình Máu</span>
+            </label>
+            <div style="font-size: 9.5px; color: #b0bec5; line-height: 1.4;">
+              Trạng thái: <b id="sm-shop-status" style="color: #ffd54f;">Sẵn sàng</b><br>
+              Đã bán: <b id="sm-trash-sold" style="color: #69f0ae;">0</b> món | Đã mua: <b id="sm-potions-bought" style="color: #40c4ff;">0</b>/100 bình
+            </div>
+            <button id="sm-btn-force-shop" style="width: 100%; background: linear-gradient(135deg, #e65100, #ff9800); border: none; border-radius: 5px; padding: 5px; color: #fff; font-weight: bold; font-size: 10px; cursor: pointer; margin-top: 2px;">
+              🏃 Đi Bán Rác & Nạp Máu Ngay
+            </button>
+          </div>
+
+          <!-- Session Token Tools -->
+          <div style="background: rgba(16, 21, 31, 0.9); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 7px 9px; display: flex; flex-direction: column; gap: 5px;">
+            <div style="font-weight: bold; color: #80d8ff; font-size: 10px;">🔑 QUẢN LÝ MÃ PHIÊN TÀI KHOẢN:</div>
+            <div style="display: flex; gap: 4px;">
+              <input id="sm-token-input" type="password" placeholder="Mã phiên (s.xxxx)" readonly style="flex: 1; background: #0b0f17; border: 1px solid #30363d; border-radius: 4px; padding: 4px 6px; color: #a5d6ff; font-size: 9.5px; outline: none;" />
+              <button id="sm-btn-copy-token" style="background: #238636; border: none; border-radius: 4px; padding: 4px 8px; color: #fff; font-size: 9.5px; font-weight: bold; cursor: pointer;">📋 Chép</button>
+              <button id="sm-btn-paste-token" style="background: #1f6feb; border: none; border-radius: 4px; padding: 4px 8px; color: #fff; font-size: 9.5px; font-weight: bold; cursor: pointer;">✏️ Dán</button>
+            </div>
+            <div id="sm-token-msg" style="color: #69f0ae; font-size: 9px; display: none;">✅ Đã chép mã phiên!</div>
+          </div>
+
+          <div style="display: flex; gap: 6px;">
+            <button id="sm-btn-open-chat" style="flex: 1; background: #3e2723; border: 1px solid #ffb300; color: #ffd76a; border-radius: 5px; font-size: 10px; padding: 4px; cursor: pointer; font-weight: bold;">💬 Khung Chat Nổi</button>
+          </div>
+        </div>
       </div>
     </div>
   `;
@@ -1629,15 +1605,15 @@
   const botMiniBadge = document.createElement('div');
   botMiniBadge.id = 'sm-mini-badge';
   botMiniBadge.innerHTML = `
-    <div style="position: fixed; top: 65px; right: 15px; background: rgba(14, 20, 28, 0.9); border: 1.5px solid #00e676;
-                border-radius: 20px; padding: 4px 12px; color: #fff; font-family: 'Segoe UI', Tahoma, sans-serif;
-                font-size: 11px; z-index: 999999; box-shadow: 0 4px 16px rgba(0,0,0,0.6); backdrop-filter: blur(8px);
-                display: none; align-items: center; gap: 8px; cursor: grab; user-select: none;">
-      <span id="sm-mini-status">🟢 Bot v13.9</span>
+    <div style="position: fixed; top: 68px; right: 12px; background: rgba(10, 14, 23, 0.92); border: 1.5px solid #00e676;
+                border-radius: 20px; padding: 4px 12px; color: #fff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                font-size: 11px; z-index: 999999; box-shadow: 0 4px 18px rgba(0,0,0,0.7); backdrop-filter: blur(10px);
+                display: none; align-items: center; gap: 8px; cursor: grab; user-select: none; touch-action: none;">
+      <span id="sm-mini-status" style="font-weight: bold; color: #00e676;">🟢 v14</span>
       <span style="color: #ffd76a;">⚔️ <b id="sm-mini-atk">0</b></span>
-      <span style="color: #ff8a80;">🛡️ <b id="sm-mini-breakout">0</b></span>
-      <span id="sm-mini-state" style="color: #80d8ff; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Khởi tạo...</span>
-      <button id="sm-mini-btn-expand" title="Mở rộng giao diện" style="background: #2e7d32; border: 1px solid #4caf50; color: #fff; border-radius: 10px; padding: 2px 8px; font-size: 10px; font-weight: bold; cursor: pointer;">📂 Mở</button>
+      <span style="color: #ff9100;">🛡️ <b id="sm-mini-breakout">0</b></span>
+      <span id="sm-mini-state" style="color: #40c4ff; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Khởi tạo...</span>
+      <button id="sm-mini-btn-expand" title="Mở rộng giao diện" style="background: linear-gradient(135deg, #1b5e20, #00c853); border: none; color: #fff; border-radius: 10px; padding: 2px 9px; font-size: 10px; font-weight: bold; cursor: pointer;">📂 Mở</button>
     </div>
   `;
   document.body.appendChild(botMiniBadge);
@@ -1646,10 +1622,10 @@
   const botFab = document.createElement('div');
   botFab.id = 'sm-fab-toggle';
   botFab.innerHTML = `
-    <div style="position: fixed; top: 75px; left: 15px; width: 42px; height: 42px; background: linear-gradient(135deg, #1b5e20, #00e676);
-                border: 2px solid #fff; border-radius: 50%; box-shadow: 0 4px 18px rgba(0,230,118,0.85); z-index: 1000000;
+    <div style="position: fixed; top: 70px; left: 12px; width: 44px; height: 44px; background: radial-gradient(circle at 30% 30%, #00e676, #004d40);
+                border: 2px solid rgba(255,255,255,0.9); border-radius: 50%; box-shadow: 0 0 15px rgba(0,230,118,0.7), 0 4px 14px rgba(0,0,0,0.6); z-index: 1000000;
                 display: flex; align-items: center; justify-content: center; cursor: pointer; user-select: none;
-                font-size: 22px; transition: transform 0.15s ease;" title="Bật/Tắt Bảng Bot Cổ Giới">
+                font-size: 22px; transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275); touch-action: none;" title="Chạm để Mở / Đóng Bot Cổ Giới">
       🤖
     </div>
   `;
@@ -1663,16 +1639,84 @@
   makeDraggable(botMiniEl, botMiniEl, 'ancient_bot_mini_pos');
   makeDraggable(botFabEl, botFabEl, 'ancient_bot_fab_pos');
 
+  // Mặc định: Panel thu gọn, chỉ hiện nút FAB 🤖 neon tinh gọn!
+  botPanelEl.style.display = 'none';
+  botMiniEl.style.display = 'none';
+
   function toggleBotPanel() {
     if (botPanelEl.style.display === 'none') {
-      botPanelEl.style.display = 'block';
+      botPanelEl.style.display = 'flex';
       botMiniEl.style.display = 'none';
     } else {
       botPanelEl.style.display = 'none';
-      botMiniEl.style.display = 'flex';
     }
   }
   botFabEl.onclick = toggleBotPanel;
+
+  // Tab switcher
+  const tabBtns = botPanel.querySelectorAll('.sm-tab-btn');
+  const tabContents = {
+    combat: botPanel.querySelector('#sm-tab-combat'),
+    skills: botPanel.querySelector('#sm-tab-skills'),
+    shop: botPanel.querySelector('#sm-tab-shop')
+  };
+
+  tabBtns.forEach(btn => {
+    btn.onclick = () => {
+      tabBtns.forEach(b => {
+        b.style.background = 'rgba(255,255,255,0.05)';
+        b.style.borderColor = 'transparent';
+        b.style.color = '#8b949e';
+      });
+      btn.style.background = 'rgba(0,230,118,0.18)';
+      btn.style.borderColor = '#00e676';
+      btn.style.color = '#00e676';
+
+      const targetTab = btn.getAttribute('data-tab');
+      Object.keys(tabContents).forEach(k => {
+        if (tabContents[k]) {
+          tabContents[k].style.display = (k === targetTab) ? 'flex' : 'none';
+        }
+      });
+    };
+  });
+
+  // Token manager handlers
+  const tokenInput = botPanel.querySelector('#sm-token-input');
+  const btnCopyToken = botPanel.querySelector('#sm-btn-copy-token');
+  const btnPasteToken = botPanel.querySelector('#sm-btn-paste-token');
+  const tokenMsg = botPanel.querySelector('#sm-token-msg');
+
+  if (tokenInput) {
+    const curTok = localStorage.getItem('dainam_session') || '';
+    tokenInput.value = curTok;
+  }
+
+  if (btnCopyToken) {
+    btnCopyToken.onclick = () => {
+      const curTok = localStorage.getItem('dainam_session') || '';
+      if (!curTok) {
+        alert('Chưa có mã phiên đăng nhập!');
+        return;
+      }
+      navigator.clipboard?.writeText(curTok).catch(() => {});
+      if (tokenMsg) {
+        tokenMsg.style.display = 'block';
+        tokenMsg.textContent = '✅ Đã sao chép mã phiên!';
+        setTimeout(() => { tokenMsg.style.display = 'none'; }, 2500);
+      }
+    };
+  }
+
+  if (btnPasteToken) {
+    btnPasteToken.onclick = () => {
+      const t = prompt('Dán mã phiên tài khoản (bắt đầu bằng s.):');
+      if (t && t.trim()) {
+        localStorage.setItem('dainam_session', t.trim());
+        location.reload();
+      }
+    };
+  }
 
   // Cử chỉ chạm 2 lần vào góc trên bên trái (dưới avatar) để bật/tắt bot
   let lastTapTime = 0;
@@ -1687,20 +1731,6 @@
     }
     lastTapTime = now;
   });
-
-  // Sync to APK handler
-  const btnSyncApk = botPanel.querySelector('#sm-btn-sync-apk');
-  if (btnSyncApk) {
-    btnSyncApk.onclick = () => {
-      const token = localStorage.getItem('dainam_session');
-      if (!token) {
-        alert('Chưa có mã phiên đăng nhập (dainam_session)! Vui lòng đăng nhập Google trước.');
-        return;
-      }
-      try { navigator.clipboard?.writeText(token.trim()); } catch(e){}
-      location.href = 'ancientrealm://auth?token=' + encodeURIComponent(token.trim());
-    };
-  }
 
   // Auto-Shop Event Handlers
   const chkAutoShop = botPanel.querySelector('#sm-toggle-autoshop');
@@ -1723,15 +1753,25 @@
 
   // Toggle thu gọn bot panel
   const btnMinBot = botPanel.querySelector('#sm-btn-min');
+  const btnCloseBot = botPanel.querySelector('#sm-btn-close');
   const btnExpandBot = botMiniBadge.querySelector('#sm-mini-btn-expand');
-  btnMinBot.onclick = () => {
-    botPanelEl.style.display = 'none';
-    botMiniEl.style.display = 'flex';
-  };
-  btnExpandBot.onclick = () => {
-    botMiniEl.style.display = 'none';
-    botPanelEl.style.display = 'block';
-  };
+  if (btnMinBot) {
+    btnMinBot.onclick = () => {
+      botPanelEl.style.display = 'none';
+      botMiniEl.style.display = 'flex';
+    };
+  }
+  if (btnCloseBot) {
+    btnCloseBot.onclick = () => {
+      botPanelEl.style.display = 'none';
+    };
+  }
+  if (btnExpandBot) {
+    btnExpandBot.onclick = () => {
+      botMiniEl.style.display = 'none';
+      botPanelEl.style.display = 'flex';
+    };
+  }
 
   // =========================================================================
   // 2. KHUNG CHAT KÉO THẢ GỌN NHẸ DỄ NHÌN (FLOATING DRAGGABLE CHAT)
@@ -1742,7 +1782,7 @@
     <div style="position: fixed; left: 15px; bottom: 85px; width: 360px; background: rgba(14, 18, 26, 0.88);
                 border: 1px solid rgba(255, 215, 106, 0.45); border-radius: 9px; box-shadow: 0 8px 30px rgba(0,0,0,0.75);
                 backdrop-filter: blur(10px); z-index: 999998; font-family: 'Segoe UI', Tahoma, sans-serif;
-                font-size: 11.5px; display: flex; flex-direction: column; overflow: hidden;
+                font-size: 11.5px; display: none; flex-direction: column; overflow: hidden;
                 transition: transform 0.15s ease, opacity 0.15s ease;">
       <!-- Header Drag Handle -->
       <div id="afc-header" style="background: linear-gradient(90deg, #3e2723, #4e342e); padding: 5px 10px;
@@ -1902,6 +1942,10 @@
     floatingChatEl.style.display = 'none';
     chatBubbleEl.style.display = 'flex';
   }
+  function closeChat() {
+    floatingChatEl.style.display = 'none';
+    chatBubbleEl.style.display = 'none';
+  }
   function openChat() {
     chatBubbleEl.style.display = 'none';
     floatingChatEl.style.display = 'flex';
@@ -1910,17 +1954,17 @@
     afcMessages.scrollTop = afcMessages.scrollHeight;
   }
 
-  const isMobile = (window.innerWidth <= 768) || ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
-  if (isMobile) {
-    botPanelEl.style.display = 'none';
-    botMiniEl.style.display = 'flex';
-    minimizeChat();
-  }
+  // Mặc định ẩn hoàn toàn cả khung chat lẫn bubble để không bao giờ chắn joystick ảo
+  floatingChatEl.style.display = 'none';
+  chatBubbleEl.style.display = 'none';
 
   btnMinChat.onclick = minimizeChat;
-  btnCloseChat.onclick = minimizeChat;
+  btnCloseChat.onclick = closeChat;
   chatBubbleEl.onclick = openChat;
-  botPanel.querySelector('#sm-btn-open-chat').onclick = openChat;
+  const btnOpenChat = botPanel.querySelector('#sm-btn-open-chat');
+  if (btnOpenChat) {
+    btnOpenChat.onclick = openChat;
+  }
 
   // Gõ phím gửi tin nhắn trực tiếp
   afcForm.onsubmit = (e) => {
