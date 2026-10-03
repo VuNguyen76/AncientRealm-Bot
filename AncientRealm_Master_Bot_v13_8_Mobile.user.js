@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Ancient Realm - Master Bot v15.1 (Khóa Tầm Đánh Chuẩn Xác, Tự Hồi Sinh, Smart Potion & Mobile Mini HUD)
+// @name         Ancient Realm - Master Bot v15.2 (Triệt Tiêu Quái 0 Máu & 1 Máu, Khóa Tầm Đánh & Tự Hồi Sinh)
 // @namespace    http://tampermonkey.net/
-// @version      15.1.0
-// @description  Khắc phục triệt để lỗi đi ra ngoài tầm đánh (keep_range 0.88), tự động hồi sinh và quay lại bãi farm/quest, Smart Potion 1200ms, né chiêu Boss đa hình dạng 2.5D, Mobile Mini HUD 1 chạm.
+// @version      15.2.0
+// @description  Loại bỏ triệt để quái 0 máu và 1 máu (Dead Mob Blacklist & Fast Drop), khóa tầm đánh keep_range 0.88, tự động hồi sinh, Smart Potion 1200ms, né chiêu Boss 2.5D, Mobile Mini HUD 1 chạm.
 // @author       Antigravity
 // @match        *://ancientrealm.online/*
 // @match        *://*.ancientrealm.online/*
@@ -10,12 +10,15 @@
 // @grant        none
 // ==/UserScript==
 
-// AncientRealm Online - Master Bot v15.1.0 (Combat Range Lock, Keep-Range 0.88, Auto-Revive, Smart Potion & Mobile Mini HUD)
+// AncientRealm Online - Master Bot v15.2.0 (Zero & 1 HP Mob Purge, Dead Blacklist, Combat Range Lock & Auto-Revive)
 // ĐÁP ỨNG CHÍNH XÁC 100% YÊU CẦU CỦA SẾP:
-// 1. KHẮC PHỤC TRIỆT ĐỂ BÀI TOÁN "ĐI RA NGOÀI TẦM ĐÁNH / LÙI CHẠY LUNG TUNG":
+// 1. TRIỆT TIÊU TOÀN BỘ QUÁI 0 MÁU VÀ 1 MÁU (DEAD MOB BLACKLIST & FAST TARGET-DROP):
+//    - Hàm isMobAlive(m): Lọc triệt để quái có hp <= 1, st & 1 hoặc dead flag. Không bao giờ target/đuổi theo xác chết!
+//    - Bắt sự kiện die và snapshot s.n từ server: Lập tức hủy khóa target, un-target và đưa mob vào Blacklist 12s.
+//    - Kiểm tra và ép giải phóng window.GAME.lockId/targetId nếu game client tự khóa vào quái chết/1 máu.
+// 2. KHẮC PHỤC TRIỆT ĐỂ BÀI TOÁN "ĐI RA NGOÀI TẦM ĐÁNH":
 //    - Chuẩn hóa keep_range = 0.88 từ coviet-extension: reach = (baseRange + targetRadius) * 0.88.
 //    - Khi distToTarget <= reach: Lập tức khóa STAND, gọi stopMoving(), triệt tiêu hoàn toàn logic lùi lung tung!
-//    - Xóa bỏ cờ isPeeling dMin <= 120 (thủ phạm khiến cận chiến vừa áp sát đã quay đầu bỏ chạy).
 //    - Vector Đẩy Lùi Vật Thể Tĩnh (Static Obstacle Repulsion):
 //      Quét toàn bộ 276 vật cản tĩnh (world.cols - cây, đá, tường) trong bán kính 90px.
 //      Vật cản tự động tạo ra lực đẩy cực mạnh hướng ra ngoài -> Bot KHÔNG BAO GIỜ lùi vào góc chết/bụi cây!
@@ -539,6 +542,60 @@
     return window.GAME?.GD?.mobs?.[mob.kind] || window.GAME?.GD?.mobs?.[mob.type] || mob.m || null;
   }
 
+  // =========================================================================
+  // BỘ LỌC TRIỆT TIÊU QUÁI 0 MÁU & 1 MÁU (DEAD MOB BLACKLIST & FAST-DROP)
+  // =========================================================================
+  const deadMobBlacklist = new Map();
+
+  function markMobDead(id) {
+    if (!id) return;
+    deadMobBlacklist.set(id, performance.now() + 12000);
+    const mb = window.GAME?.mobs?.get(id);
+    if (mb) {
+      mb.dead = true;
+      mb.st = (mb.st || 0) | 1;
+      mb.hp = 0;
+    }
+    if (currentTargetId === id) {
+      currentTargetId = null;
+      if (window.GAME) {
+        window.GAME.lockId = 0;
+        window.GAME.targetId = 0;
+      }
+      if (lastTargetIdSent) {
+        window.GAME.net.send({ t: 'tg', id: 0 });
+        lastTargetIdSent = null;
+      }
+    }
+  }
+
+  function isMobAlive(m) {
+    if (!m) return false;
+    const id = m.id;
+    const now = performance.now();
+    if (id) {
+      const exp = deadMobBlacklist.get(id);
+      if (exp && now < exp) return false;
+    }
+    // 1. Quái có cờ chết: st & 1 (ST.DEAD = 1) hoặc cờ dead
+    if ((m.st & 1) || m.dead) {
+      if (id) deadMobBlacklist.set(id, now + 12000);
+      return false;
+    }
+    // 2. LOẠI BỎ TRIỆT ĐỂ QUÁI 0 MÁU VÀ 1 MÁU:
+    // Quái có hp <= 1 là xác chết đang chờ tan biến, hoặc hoạt ảnh tử trận, hoặc bug đồng bộ
+    if (typeof m.hp === 'number' && m.hp <= 1) {
+      if (id) deadMobBlacklist.set(id, now + 12000);
+      return false;
+    }
+    // 3. Nếu mob có maxHp > 0 nhưng hp <= 1
+    if (typeof m.maxHp === 'number' && m.maxHp > 0 && m.hp <= 1) {
+      if (id) deadMobBlacklist.set(id, now + 12000);
+      return false;
+    }
+    return true;
+  }
+
   function applySkillLoadout(s0, s1, s2) {
     const isFighting = movementState === 'RETREAT' || devState.pursuerCount > 0;
     if (isFighting) {
@@ -576,8 +633,17 @@
                 const elDist = document.getElementById('sm-measured-atk');
                 if (elDist) elDist.textContent = `${devState.lastMeasuredMobKind}: ${devState.lastMeasuredAtkDist}px`;
               }
+            } else if (ev.k === 'die') {
+              // BẮT SỰ KIỆN QUÁI CHẾT TỪ SERVER (Học từ sync.js của CoViet)
+              markMobDead(ev.t);
             } else if (ev.k === 'hit' && ev.t < MOB_BASE) {
               devState.totalDamageTaken += ev.d || 0;
+            } else if (ev.k === 'hit' && ev.t >= MOB_BASE) {
+              // Kiểm tra xem quái có bị kết liễu thành <= 1 máu không
+              const hitMob = window.GAME?.mobs?.get(ev.t);
+              if (hitMob && typeof hitMob.hp === 'number' && hitMob.hp <= 1) {
+                markMobDead(ev.t);
+              }
             } else if (ev.k === 'tele') {
               addBossHazard(ev, now);
             } else if (ev.k === 'boom') {
@@ -586,6 +652,7 @@
           }
         } else if (m.type === 'map' || m.type === 'welcome') {
           activeHazards.length = 0;
+          deadMobBlacklist.clear();
         } else if (m.type === 'got') {
           devState.totalItemsPicked++;
           const lootEl = document.getElementById('sm-s-loot');
@@ -599,6 +666,17 @@
   const originalOnSnapshot = window.GAME.net.h.onSnapshot;
   window.GAME.net.h.onSnapshot = function(s) {
     if (s && s.d) capturedDrops = s.d;
+    if (s && Array.isArray(s.n)) {
+      // Quét nhanh mảng snapshot quái: [id, kind, x, y, , mv, hp, maxHp, st, tgt]
+      for (const r of s.n) {
+        const id = r[0];
+        const hp = r[6];
+        const st = r[8];
+        if ((st & 1) || (typeof hp === 'number' && hp <= 1)) {
+          markMobDead(id);
+        }
+      }
+    }
     return originalOnSnapshot.apply(this, arguments);
   };
 
@@ -861,7 +939,7 @@
 
   function resolveTargetAndState(me) {
     disableNativeAutoFight();
-    const allMobs = window.GAME?.mobs ? Array.from(window.GAME.mobs.values()).filter(m => !(m.st & 1) && m.hp > 0) : [];
+    const allMobs = window.GAME?.mobs ? Array.from(window.GAME.mobs.values()).filter(m => isMobAlive(m)) : [];
     const spawns = window.GAME?.world?.zone?.spawns || [];
     const cfgTarget = cfg.targetMob;
 
@@ -880,20 +958,20 @@
     // ==========================================
     let pvpOpponent = null;
     if (window._activeDuel && window._activeDuel.foeId) {
-      pvpOpponent = allPlayers.find(p => p.id === window._activeDuel.foeId && !(p.st & 1) && p.hp > 0);
+      pvpOpponent = allPlayers.find(p => p.id === window._activeDuel.foeId && !(p.st & 1) && p.hp > 1);
     }
     if (!pvpOpponent) {
       const lock = window.GAME?.lockId || window.GAME?.targetId;
       if (lock && lock < 1_000_000 && lock !== myId) {
-        pvpOpponent = allPlayers.find(p => p.id === lock && !(p.st & 1) && p.hp > 0);
+        pvpOpponent = allPlayers.find(p => p.id === lock && !(p.st & 1) && p.hp > 1);
       }
     }
     if (!pvpOpponent && cfgTarget && cfgTarget.startsWith('player_')) {
       const pId = parseInt(cfgTarget.replace('player_', ''));
-      pvpOpponent = allPlayers.find(p => p.id === pId && !(p.st & 1) && p.hp > 0);
+      pvpOpponent = allPlayers.find(p => p.id === pId && !(p.st & 1) && p.hp > 1);
     }
     if (!pvpOpponent && isPvpZone) {
-      const rivals = allPlayers.filter(p => p.id !== myId && !(p.st & 1) && p.hp > 0);
+      const rivals = allPlayers.filter(p => p.id !== myId && !(p.st & 1) && p.hp > 1);
       if (rivals.length > 0) {
         rivals.sort((a, b) => Math.hypot(a.x - me.x, a.y - me.y) - Math.hypot(b.x - me.x, b.y - me.y));
         pvpOpponent = rivals[0];
@@ -954,7 +1032,7 @@
       let lockedTarget = null;
       if (currentTargetId) {
         const cur = allMobs.find(m => m.id === currentTargetId);
-        if (cur && !(cur.st & 1) && cur.hp > 0) {
+        if (cur && isMobAlive(cur)) {
           const dCur = Math.hypot(cur.x - me.x, cur.y - me.y);
           const matches = targetFilter.matches(cur.kind, getMobDef(cur)?.id);
           if (dCur <= 750 && matches) {
@@ -1046,7 +1124,7 @@
     let lockedTarget = null;
     if (currentTargetId) {
       const cur = allMobs.find(m => m.id === currentTargetId);
-      if (cur && !(cur.st & 1) && cur.hp > 0) {
+      if (cur && isMobAlive(cur)) {
         const dCur = Math.hypot(cur.x - me.x, cur.y - me.y);
         if (dCur <= 650) {
           lockedTarget = cur;
@@ -1114,7 +1192,7 @@
   let localCastUntil = 0;
 
   function executeOracleAttack(target, now, distToTarget, dMin, closestMob, pursuerCount, isEmergencyBreakout, isPvP) {
-    if (!target || (target.st & 1) || target.hp <= 0) return;
+    if (!target || !isMobAlive(target)) return;
     const me = window.GAME?.me;
     if (!me) return;
 
@@ -2250,7 +2328,7 @@
         const distFarm = Math.hypot(farmX - me.x, farmY - me.y);
 
         // Kiểm tra xem quái mục tiêu đã xuất hiện xung quanh chưa hoặc đã về gần bãi (<= 110px)
-        const targetMobsNearby = Array.from(window.GAME?.mobs?.values() || []).filter(m => !(m.st & 1) && m.hp > 0 && (cfg.targetMob === 'all' || m.kind === cfg.targetMob));
+        const targetMobsNearby = Array.from(window.GAME?.mobs?.values() || []).filter(m => isMobAlive(m) && (cfg.targetMob === 'all' || m.kind === cfg.targetMob));
         const hasTargetNearby = targetMobsNearby.some(m => Math.hypot(m.x - me.x, m.y - me.y) <= 200);
 
         if (distFarm <= 110 || hasTargetNearby) {
@@ -2548,7 +2626,7 @@
       
       <!-- Top Telemetry Row -->
       <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 4px;">
-        <span id="sm-mini-status" style="font-weight: bold; color: #00e676; font-size: 11px;">🟢 v15.1.0</span>
+        <span id="sm-mini-status" style="font-weight: bold; color: #00e676; font-size: 11px;">🟢 v15.2.0</span>
         <span style="color: #ff5252;">❤️ <b id="sm-mini-hp">100%</b></span>
         <span style="color: #69f0ae;">🩸 <b id="sm-mini-pots">0</b></span>
         <span style="color: #ffd740;">💰 <b id="sm-mini-gold">0</b></span>
@@ -3091,7 +3169,7 @@
     const gdMobs = window.GAME?.GD?.mobs || {};
     const zone = window.GAME?.world?.zone;
     const spawns = zone?.spawns || [];
-    const activeMobs = Array.from(window.GAME?.mobs?.values() || []).filter(m => !(m.st & 1));
+    const activeMobs = Array.from(window.GAME?.mobs?.values() || []).filter(m => isMobAlive(m));
     const curVal = mobSel.value;
 
     mobSel.innerHTML = '<option value="all">🌟 Tự động (Mọi quái trong khu vực)</option>';
@@ -3546,19 +3624,27 @@
       lastPosCheck = { x: me.x, y: me.y, t: now };
     }
 
-    // Dọn dẹp mục tiêu chết để giải phóng khóa mục tiêu (không kẹt target cũ)
+    // Dọn dẹp định kỳ blacklist tránh phình bộ nhớ
+    if (deadMobBlacklist.size > 200) {
+      const nowMs = performance.now();
+      for (const [id, exp] of deadMobBlacklist.entries()) {
+        if (nowMs >= exp) deadMobBlacklist.delete(id);
+      }
+    }
+
+    // Dọn dẹp mục tiêu chết hoặc quái 0 máu / 1 máu để giải phóng khóa mục tiêu
     if (currentTargetId) {
       const curMob = window.GAME?.mobs?.get(currentTargetId);
-      if (!curMob || (curMob.st & 1) || curMob.hp <= 0) {
-        currentTargetId = null;
-        if (window.GAME) {
-          window.GAME.lockId = 0;
-          window.GAME.targetId = 0;
-        }
-        if (lastTargetIdSent) {
-          window.GAME.net.send({ t: 'tg', id: 0 });
-          lastTargetIdSent = null;
-        }
+      if (!curMob || !isMobAlive(curMob)) {
+        markMobDead(currentTargetId);
+      }
+    }
+
+    // Nếu game client đang tự khóa (lockId / targetId) vào quái chết hoặc <= 1 máu: Giải phóng ngay!
+    if (window.GAME?.lockId) {
+      const lockedMob = window.GAME.mobs?.get(window.GAME.lockId);
+      if (lockedMob && !isMobAlive(lockedMob)) {
+        markMobDead(window.GAME.lockId);
       }
     }
 
@@ -3625,7 +3711,9 @@
     }
 
     const targetMob = state.target;
-    if (!targetMob) {
+    if (!targetMob || !isMobAlive(targetMob)) {
+      if (targetMob) markMobDead(targetMob.id);
+      currentTargetId = null;
       movementState = 'STAND';
       stopMoving();
       if (statusTxt) statusTxt.textContent = "Đang quét tìm quái...";
@@ -3721,7 +3809,7 @@
     // Xả kỹ năng: Khi bị vây khẩn cấp, kích hoạt Choáng diện rộng ngay lập tức!
     executeOracleAttack(targetMob, now, distToTarget, state.dMin, state.closestMob, state.pursuerCount, isPinnedAgainstWall, state.isPvP);
 
-    if (miniStatusEl) miniStatusEl.textContent = cfg.enabled ? '🟢 Bot v15.1.0' : '🔴 Tạm dừng';
+    if (miniStatusEl) miniStatusEl.textContent = cfg.enabled ? '🟢 Bot v15.2.0' : '🔴 Tạm dừng';
     if (miniAtkEl) miniAtkEl.textContent = devState.totalAttacks;
     if (miniBreakoutEl) miniBreakoutEl.textContent = devState.breakoutsTriggered;
     if (miniStateEl && statusTxt) miniStateEl.textContent = statusTxt.textContent;
@@ -3729,7 +3817,7 @@
 
 
   window._ancientMasterBot = {
-    version: '15.1.0',
+    version: '15.2.0',
     cfg,
     devState,
     skillTimers,
@@ -3754,10 +3842,10 @@
       if (origUiChatLine && window.GAME?.ui) window.GAME.ui.chatLine = origUiChatLine;
       if (origUiToggleChat && window.GAME?.ui) window.GAME.ui.toggleChat = origUiToggleChat;
       delete window._ancientMasterBot;
-      console.log("%c[BOT v15.1.0] Đã gỡ bỏ toàn bộ giao diện và tiến trình.", "color: #ff9800; font-weight: bold;");
+      console.log("%c[BOT v15.2.0] Đã gỡ bỏ toàn bộ giao diện và tiến trình.", "color: #ff9800; font-weight: bold;");
     }
   };
 
-    console.log("%c[BOT v15.1.0] KHỞI ĐỘNG THÀNH CÔNG: KHÓA TẦM ĐÁNH CHUẨN XÁC, AUTO-REVIVE & SMART POTION!", "color: #00e676; font-size: 14px; font-weight: bold;");
+    console.log("%c[BOT v15.2.0] KHỞI ĐỘNG THÀNH CÔNG: LỌC QUÁI 0/1 MÁU, KHÓA TẦM ĐÁNH & AUTO-REVIVE!", "color: #00e676; font-size: 14px; font-weight: bold;");
   }
 })();

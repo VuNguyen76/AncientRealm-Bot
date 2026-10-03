@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Ancient Realm - Master Bot v15.1 (Khóa Tầm Đánh Chuẩn Xác, Tự Hồi Sinh & Mobile HUD)",
-  "version": "15.1.0",
-  "description": "Khắc phục triệt để lỗi đi ra ngoài tầm đánh (keep_range 0.88), tự động hồi sinh và quay lại bãi farm/quest, Smart Potion 1200ms nhịp nhàng, né chiêu Boss đa hình 2.5D, Mobile Mini HUD 1 chạm.",
+  "name": "Ancient Realm - Master Bot v15.2 (Lọc Quái 0/1 Máu, Khóa Tầm Đánh & Tự Hồi Sinh)",
+  "version": "15.2.0",
+  "description": "Loại bỏ triệt để quái 0 máu và 1 máu (Dead Mob Blacklist & Fast Drop), khóa tầm đánh keep_range 0.88, tự động hồi sinh, Smart Potion 1200ms, né chiêu Boss 2.5D, Mobile Mini HUD 1 chạm.",
   "author": "Antigravity",
   "icons": {
     "48": "icon48.png",
