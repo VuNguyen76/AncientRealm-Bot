@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Ancient Realm - Master Bot v15.4 (Khắc Chế Độc Nghê Chúa & Né Chiêu Không Kẹt Đá)",
-  "version": "15.4.0",
-  "description": "Nhận diện toàn diện Boss Nghê Chúa, khắc chế đám mây độc/lửa tồn lưu, né chiêu theo đường thoát tự do không kẹt đá, né tầm đánh thường của Boss.",
+  "name": "Ancient Realm - Master Bot v15.2 (Triệt Tiêu Quái 0/1 Máu & Chuẩn Hóa Role)",
+  "version": "15.2.0",
+  "description": "Triệt tiêu quái 0 máu và 1 máu, chuẩn hóa môn phái & Role cận chiến / đánh xa với nút bấm 1 chạm trên Mini HUD, khóa chân tầm đánh keep_range 0.85-0.88 theo coviet-extension.",
   "author": "Antigravity",
   "icons": {
     "48": "icon48.png",
