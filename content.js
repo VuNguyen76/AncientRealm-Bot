@@ -84,16 +84,30 @@
   // BẮT KẾT NỐI WEBSOCKET ĐỂ CHỐNG LỖI GAME.net BỊ NULL KHI ĐĂNG NHẬP LẦN ĐẦU:
   if (!window.__wsCaptured) {
     window.__wsCaptured = true;
-    const OrigWebSocket = window.WebSocket;
     window.__activeWS = null;
-    window.WebSocket = function(...args) {
-      const ws = new OrigWebSocket(...args);
-      if (args[0] && String(args[0]).includes('/ws')) {
-        window.__activeWS = ws;
+    const OrigWebSocket = window.WebSocket;
+    if (OrigWebSocket) {
+      try {
+        const WSProxy = new Proxy(OrigWebSocket, {
+          construct(target, args) {
+            const ws = Reflect.construct(target, args);
+            if (args[0] && String(args[0]).includes('/ws')) {
+              window.__activeWS = ws;
+            }
+            return ws;
+          }
+        });
+        // BẢO ĐẢM TOÀN BỘ HẰNG SỐ NGUYÊN BẢN (OPEN=1, CONNECTING=0...) KHÔNG BỊ MẤT
+        WSProxy.CONNECTING = OrigWebSocket.CONNECTING !== undefined ? OrigWebSocket.CONNECTING : 0;
+        WSProxy.OPEN = OrigWebSocket.OPEN !== undefined ? OrigWebSocket.OPEN : 1;
+        WSProxy.CLOSING = OrigWebSocket.CLOSING !== undefined ? OrigWebSocket.CLOSING : 2;
+        WSProxy.CLOSED = OrigWebSocket.CLOSED !== undefined ? OrigWebSocket.CLOSED : 3;
+        WSProxy.prototype = OrigWebSocket.prototype;
+        window.WebSocket = WSProxy;
+      } catch (e) {
+        console.warn("[WS HOOK FAILED]", e);
       }
-      return ws;
-    };
-    window.WebSocket.prototype = OrigWebSocket.prototype;
+    }
   }
 
   // 0. HOT-PATCH CHỐNG CRASH GAME GỐC (main.js:884 Cannot read properties of null reading 'joined')
@@ -132,11 +146,6 @@
               }
             }
           };
-        } else if (localStorage.getItem('dainam_session') && !sessionStorage.getItem('__bot_net_synced')) {
-          sessionStorage.setItem('__bot_net_synced', '1');
-          console.log("%c[BOT ENGINE] Đã phát hiện phiên đăng nhập, đang reload nhanh để GAME.net đồng bộ chuẩn...", "color: #00e676; font-weight: bold;");
-          location.reload();
-          return;
         } else {
           setTimeout(boot, 300);
           return;
