@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Ancient Realm - Master Bot v13.8 (Mobile & PC)",
+  "version": "13.8.0",
+  "description": "Tự động bán rác khi đầy túi, tự động mua bình máu, quay lại bãi farm ban đầu; Tương thích Mobile & PC.",
+  "author": "Antigravity",
+  "icons": {
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://ancientrealm.online/*",
+        "*://*.ancientrealm.online/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "world": "MAIN",
+      "run_at": "document_idle"
+    }
+  ]
+}
