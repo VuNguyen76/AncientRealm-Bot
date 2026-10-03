@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Ancient Realm - Master Bot v15.3 (Khắc Chế Đánh Thường Boss, Kite Thả Diều & Lọc Quái 0/1 HP)
+// @name         Ancient Realm - Master Bot v15.4 (Khắc Chế Độc/Lửa Nghê Chúa, Né Chiêu Không Đâm Sầm Vào Đá & Kite Boss)
 // @namespace    http://tampermonkey.net/
-// @version      15.3.0
-// @description  Khắc chế tầm đánh thường của Boss (Boss Normal Attack Danger Zone & Safe Kite Distance), triệt tiêu quái 0/1 máu, khóa tầm keep_range 0.88, tự động hồi sinh.
+// @version      15.4.0
+// @description  Nhận diện toàn diện Boss Nghê Chúa, khắc chế đám mây độc/lửa tồn lưu, né chiêu theo đường thoát tự do không kẹt đá, né tầm đánh thường của Boss.
 // @author       Antigravity
 // @match        *://ancientrealm.online/*
 // @match        *://*.ancientrealm.online/*
@@ -10,7 +10,7 @@
 // @grant        none
 // ==/UserScript==
 
-// AncientRealm Online - Master Bot v15.3.0 (Boss Auto-Attack Kiting, Zero & 1 HP Purge, Range Lock & Auto-Revive)
+// AncientRealm Online - Master Bot v15.4.0 (Boss Hazard Obstacle Avoidance, Nghê Chúa Recognition & Anti-Rock Pin)
 // ĐÁP ỨNG CHÍNH XÁC 100% YÊU CẦU CỦA SẾP:
 // 1. KIỂM TRA & NÉ TẦM ĐÁNH THƯỜNG SIÊU ĐAU CỦA BOSS (BOSS NORMAL ATK RANGE KITING):
 //    - Hàm getMobNormalAttackRange(mob): Tính chuẩn xác bán kính đòn đánh thường của Boss (range + r + 15px buffer).
@@ -360,15 +360,15 @@
 
   function handleBossBoom(ev, now) {
     const num = (v, d = 0) => (Number.isFinite(v) ? v : d);
-    const dur = num(ev.dur, 0);
+    // Đám mây độc / lửa bốc sau khi nổ luôn tồn lưu ít nhất 2200ms
+    const dur = Math.max(2200, num(ev.dur, 2200));
     const sh = ev.sh || 'circle';
     const i = activeHazards.findIndex(h => !h.boomed && h.sh === sh && Math.hypot(h.x - ev.x, h.y - ev.y) < 8);
     if (i >= 0) {
-      if (dur > 0) Object.assign(activeHazards[i], { boomed: true, until: now + dur + 100 });
-      else activeHazards.splice(i, 1);
-    } else if (dur > 0) {
+      Object.assign(activeHazards[i], { boomed: true, until: now + dur + 100 });
+    } else {
       activeHazards.push({
-        sh, x: ev.x, y: ev.y, r: num(ev.r, 100), r0: num(ev.r0, 0),
+        sh, x: ev.x, y: ev.y, r: num(ev.r, 110), r0: num(ev.r0, 0),
         w: num(ev.w, 0), len: num(ev.len, 0), arc: num(ev.arc, 0), ang: num(ev.ang, 0),
         until: now + dur + 100, boomed: true
       });
@@ -393,22 +393,115 @@
     }
   }
 
+  // ==========================================
+  // HỆ THỐNG KIỂM TRA VA CHẠM VẬT CẢN (COLLIDER & OBSTACLE DETECTION)
+  // Chuẩn hóa cấu trúc collider của game: ['c', x, y, r], ['b', x0, y0, x1, y1], ['e', x, y, rx, ry]
+  // ==========================================
+  function getColliderInfo(c) {
+    if (!c) return null;
+    if (Array.isArray(c)) {
+      if (c[0] === 'c') return { type: 'circle', x: c[1], y: c[2], r: c[3] || 20 };
+      if (c[0] === 'b') {
+        const cx = (c[1] + c[3]) / 2;
+        const cy = (c[2] + c[4]) / 2;
+        const r = Math.max(Math.abs(c[3] - c[1]), Math.abs(c[4] - c[2])) / 2;
+        return { type: 'box', x0: c[1], y0: c[2], x1: c[3], y1: c[4], x: cx, y: cy, r };
+      }
+      if (c[0] === 'e') return { type: 'ellipse', x: c[1], y: c[2], r: Math.max(c[3] || 20, c[4] || 20) };
+      if (typeof c[0] === 'number') return { type: 'circle', x: c[0], y: c[1], r: c[2] || 20 };
+    }
+    return null;
+  }
+
+  function isPointBlockedByCollider(px, py, pad = 16) {
+    const world = window.GAME?.world;
+    if (!world) return false;
+    if (world.w && (px < pad + 10 || px > world.w - pad - 10 || py < pad + 40 || py > world.h - pad - 10)) {
+      return true;
+    }
+    const cols = world.cols || [];
+    for (let i = 0; i < cols.length; i++) {
+      const col = getColliderInfo(cols[i]);
+      if (!col) continue;
+      if (col.type === 'circle' || col.type === 'ellipse') {
+        if (Math.hypot(px - col.x, py - col.y) < col.r + pad) return true;
+      } else if (col.type === 'box') {
+        const clampedX = Math.max(col.x0, Math.min(px, col.x1));
+        const clampedY = Math.max(col.y0, Math.min(py, col.y1));
+        if (Math.hypot(px - clampedX, py - clampedY) < pad) return true;
+      }
+    }
+    return false;
+  }
+
+  function testProbe(me, vx, vy, step = 50) {
+    const world = window.GAME?.world;
+    if (!world?.move) {
+      const targetX = me.x + vx * step;
+      const targetY = me.y + vy * step;
+      const blocked = isPointBlockedByCollider(targetX, targetY, 16);
+      return { canMove: !blocked, dist: blocked ? 0 : step, x: targetX, y: targetY };
+    }
+    const res = world.move(me.x, me.y, 16, vx * step, vy * step);
+    const dist = Math.hypot(res.x - me.x, res.y - me.y);
+    return { canMove: dist > step * 0.4, dist, x: res.x, y: res.y };
+  }
+
   function findSafeDodgePoint(me, hazards) {
-    const RINGS = [55, 95, 145, 205, 285];
+    const RINGS = [60, 105, 155, 215, 280];
     let best = null, minCost = Infinity;
+    const allMobs = Array.from(window.GAME?.mobs?.values() || []);
+
     for (const dist of RINGS) {
-      for (let angleDeg = 0; angleDeg < 360; angleDeg += 20) {
+      for (let angleDeg = 0; angleDeg < 360; angleDeg += 15) {
         const rad = angleDeg * Math.PI / 180;
-        const cx = me.x + Math.cos(rad) * dist;
-        const cy = me.y + Math.sin(rad) * dist;
-        if (hazards.some(h => isPointInsideHazard(h, cx, cy, 35))) continue;
-        const cost = dist;
+        const vx = Math.cos(rad);
+        const vy = Math.sin(rad);
+        const cx = me.x + vx * dist;
+        const cy = me.y + vy * dist;
+
+        // 1. Kiểm tra dính vùng độc/chiêu đỏ của Boss không
+        if (hazards.some(h => isPointInsideHazard(h, cx, cy, 38))) continue;
+
+        // 2. Điểm này có bị đá, cột, tường chặn không
+        if (isPointBlockedByCollider(cx, cy, 20)) continue;
+
+        // 3. Đường chạy từ nhân vật tới điểm né có bị đá chắn đường không
+        const probe = testProbe(me, vx, vy, Math.min(dist, 90));
+        if (!probe.canMove) continue;
+
+        // 4. Tránh né đâm sầm vào quái khác hoặc Boss
+        let cost = dist;
+        for (const m of allMobs) {
+          if (m && m.hp > 1 && !m.dead) {
+            const dMob = Math.hypot(cx - m.x, cy - m.y);
+            const mR = (m.r || 28) + 25;
+            if (dMob < mR) cost += 150;
+          }
+        }
+
         if (cost < minCost) {
           minCost = cost;
           best = { x: cx, y: cy };
         }
       }
     }
+
+    // Nếu bị kẹt góc vách đá, tìm hướng trượt có khoảng trống tối đa
+    if (!best) {
+      let maxClearance = -1;
+      for (let angleDeg = 0; angleDeg < 360; angleDeg += 22.5) {
+        const rad = angleDeg * Math.PI / 180;
+        const vx = Math.cos(rad);
+        const vy = Math.sin(rad);
+        const probe = testProbe(me, vx, vy, 110);
+        if (probe.dist > maxClearance) {
+          maxClearance = probe.dist;
+          best = { x: probe.x, y: probe.y };
+        }
+      }
+    }
+
     return best;
   }
 
@@ -546,23 +639,59 @@
 
   // =========================================================================
   // BỘ NHẬN DIỆN BOSS & TẦM ĐÁNH THƯỜNG CỦA BOSS (BOSS NORMAL ATTACK RANGE)
+  // Nhận diện toàn diện: Nghê Chúa, Chúa Động, Tướng, Thần, Tinh Anh, Boss Cấp Cao
   // =========================================================================
+  function stripVN(str) {
+    if (!str || typeof str !== 'string') return '';
+    return str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLowerCase().trim();
+  }
+
   function checkIsBossOrElite(mob) {
     if (!mob) return false;
     const def = getMobDef(mob);
-    if (def?.boss || def?.elite) return true;
-    const kind = (mob.kind || mob.type || '').toLowerCase();
-    if (['chantinh', 'daibang', 'moctinh', 'xuongho', 'boss', 'tinh'].some(k => kind.includes(k))) return true;
-    if ((mob.maxHp && mob.maxHp >= 15000) || (def?.hp && def.hp >= 15000)) return true;
+    if (def?.boss || def?.elite || mob.boss || mob.elite || def?.type === 2 || mob.type === 2) return true;
+
+    // Thu thập tất cả các nguồn tên và định danh
+    const rawNames = [
+      mob.name,
+      def?.name,
+      mob.m?.name,
+      mob.title,
+      mob.kind,
+      mob.type
+    ].filter(Boolean);
+
+    const normalizedNames = rawNames.map(n => stripVN(String(n)));
+
+    // Các từ khóa chỉ điểm Boss / Tinh Anh / Quái Đầu Mục
+    const bossKeywords = [
+      'nghe', 'chua', 'dong thien', 'dongthien', 'vuong', 'tuong', 'than',
+      'trum', 'thu linh', 'thulinh', 'tinh', 'cau', 'ho ba', 'hoba',
+      'daibang', 'chantinh', 'moctinh', 'xuongho', 'ga9cua', 'chuachuot',
+      'tuonggiacan', 'boss', 'elite'
+    ];
+
+    for (const n of normalizedNames) {
+      if (bossKeywords.some(k => n.includes(k))) return true;
+    }
+
+    // Kiểm tra lượng máu lớn (Boss/Elite dungeon thường có máu từ 5000 trở lên)
+    const hp = mob.maxHp || mob.hp || def?.hp || 0;
+    if (hp >= 5000) return true;
+
+    // Kiểm tra cấp độ cao bất thường (lv >= 45 với tên dài)
+    const lv = mob.lv || def?.lv || 0;
+    if (lv >= 45 && normalizedNames.some(n => n.length > 8)) return true;
+
     return false;
   }
 
   function getMobNormalAttackRange(mob) {
-    if (!mob) return 85;
+    if (!mob) return 90;
     const def = getMobDef(mob);
-    const r = mob.r || def?.r || 28;
-    const range = def?.range || 64;
-    return range + r + 15; // 15px dung sai server latency & di chuyển
+    const r = mob.r || def?.r || 35;
+    const range = def?.range || 70;
+    return range + r + 20; // 20px dung sai server latency & di chuyển
   }
 
   // =========================================================================
@@ -759,14 +888,6 @@
     return { dx: Math.cos(bestAngle), dy: Math.sin(bestAngle) };
   }
 
-  function testProbe(me, vx, vy, step = 50) {
-    const world = window.GAME?.world;
-    if (!world?.move) return { canMove: true, dist: step, x: me.x + vx * step, y: me.y + vy * step };
-    const res = world.move(me.x, me.y, 16, vx * step, vy * step);
-    const dist = Math.hypot(res.x - me.x, res.y - me.y);
-    return { canMove: dist > step * 0.5, dist, x: res.x, y: res.y };
-  }
-
   // ==========================================
   // THUẬT TOÁN ĐIỀU HƯỚNG CONGA-LINE + ĐẨY LÙI VẬT CẢN (OBSTACLE REPULSION) + 16 TIA 360 ĐỘ
   // ==========================================
@@ -784,14 +905,15 @@
     }
 
     // 2. LỰC ĐẨY TỪ VẬT CẢN TĨNH (OBSTACLE REPULSION - CÂY, ĐÁ, VÁCH):
-    // Triệt tiêu nguy cơ bị dồn vào gốc cây / góc chết!
+    // Phân tích chính xác collider server: ['c', x, y, r], ['b', x0, y0, x1, y1], ['e', x, y, rx, ry]
     const cols = window.GAME?.world?.cols || [];
     let obstacleNearCount = 0;
-    for (const c of cols) {
-      const cx = c[0], cy = c[1], cr = c[2];
-      const dx = me.x - cx, dy = me.y - cy;
+    for (let i = 0; i < cols.length; i++) {
+      const col = getColliderInfo(cols[i]);
+      if (!col) continue;
+      const dx = me.x - col.x, dy = me.y - col.y;
       const distCenter = Math.hypot(dx, dy) || 1;
-      const distSurface = distCenter - cr - 16;
+      const distSurface = distCenter - col.r - 16;
       if (distSurface < 85) {
         obstacleNearCount++;
         // Càng gần vật cản, lực đẩy ngược ra càng cực đại!
@@ -799,6 +921,10 @@
         repX += (dx / distCenter) * weight * 2500;
         repY += (dy / distCenter) * weight * 2500;
       }
+    }
+
+    if (!Number.isFinite(repX) || !Number.isFinite(repY)) {
+      repX = 0; repY = 0;
     }
 
     const repLen = Math.hypot(repX, repY) || 1;
@@ -2646,7 +2772,7 @@
       
       <!-- Top Telemetry Row -->
       <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 4px;">
-        <span id="sm-mini-status" style="font-weight: bold; color: #00e676; font-size: 11px;">🟢 v15.3.0</span>
+        <span id="sm-mini-status" style="font-weight: bold; color: #00e676; font-size: 11px;">🟢 v15.4.0</span>
         <span style="color: #ff5252;">❤️ <b id="sm-mini-hp">100%</b></span>
         <span style="color: #69f0ae;">🩸 <b id="sm-mini-pots">0</b></span>
         <span style="color: #ffd740;">💰 <b id="sm-mini-gold">0</b></span>
@@ -3615,6 +3741,18 @@
         const angle = Math.atan2(me.y - dangerousHazard.y, me.x - dangerousHazard.x);
         setSteeringVector(Math.cos(angle), Math.sin(angle));
       }
+
+      // Kiểm tra kẹt vách đá trong khi đang né chiêu
+      if (now - lastPosCheck.t > 250) {
+        const movedDist = Math.hypot(me.x - lastPosCheck.x, me.y - lastPosCheck.y);
+        if (movedDist < 6) {
+          // Kẹt đá/vách: trượt vuông góc 90 độ men theo gờ đá thoát hiểm
+          const tangentAngle = Math.atan2(me.y - dangerousHazard.y, me.x - dangerousHazard.x) + (Math.PI / 2);
+          setSteeringVector(Math.cos(tangentAngle), Math.sin(tangentAngle));
+        }
+        lastPosCheck = { x: me.x, y: me.y, t: now };
+      }
+
       if (statusTxt) statusTxt.textContent = `⚠️ NÉ CHIÊU BOSS [${(dangerousHazard.sh || 'hazard').toUpperCase()}]!`;
       if (miniStateEl) {
         miniStateEl.textContent = `⚠️ Né ${dangerousHazard.sh || 'chiêu'}`;
@@ -3928,7 +4066,7 @@
     // Xả kỹ năng: Khi bị vây khẩn cấp, kích hoạt Choáng diện rộng ngay lập tức!
     executeOracleAttack(targetMob, now, distToTarget, state.dMin, state.closestMob, state.pursuerCount, isPinnedAgainstWall, state.isPvP);
 
-    if (miniStatusEl) miniStatusEl.textContent = cfg.enabled ? '🟢 Bot v15.3.0' : '🔴 Tạm dừng';
+    if (miniStatusEl) miniStatusEl.textContent = cfg.enabled ? '🟢 Bot v15.4.0' : '🔴 Tạm dừng';
     if (miniAtkEl) miniAtkEl.textContent = devState.totalAttacks;
     if (miniBreakoutEl) miniBreakoutEl.textContent = devState.breakoutsTriggered;
     if (miniStateEl && statusTxt) miniStateEl.textContent = statusTxt.textContent;
@@ -3936,7 +4074,7 @@
 
 
   window._ancientMasterBot = {
-    version: '15.3.0',
+    version: '15.4.0',
     cfg,
     devState,
     skillTimers,
@@ -3961,10 +4099,10 @@
       if (origUiChatLine && window.GAME?.ui) window.GAME.ui.chatLine = origUiChatLine;
       if (origUiToggleChat && window.GAME?.ui) window.GAME.ui.toggleChat = origUiToggleChat;
       delete window._ancientMasterBot;
-      console.log("%c[BOT v15.3.0] Đã gỡ bỏ toàn bộ giao diện và tiến trình.", "color: #ff9800; font-weight: bold;");
+      console.log("%c[BOT v15.4.0] Đã gỡ bỏ toàn bộ giao diện và tiến trình.", "color: #ff9800; font-weight: bold;");
     }
   };
 
-    console.log("%c[BOT v15.3.0] KHỞI ĐỘNG THÀNH CÔNG: KHẮC CHẾ ĐÁNH THƯỜNG BOSS, KITE THẢ DIỀU & LỌC QUÁI 0/1 HP!", "color: #00e676; font-size: 14px; font-weight: bold;");
+    console.log("%c[BOT v15.4.0] KHỞI ĐỘNG THÀNH CÔNG: KHẮC CHẾ ĐỘC/LỬA NGHÊ CHÚA, NÉ CHIÊU KHÔNG ĐÂM SẦM VÀO ĐÁ & KITE BOSS!", "color: #00e676; font-size: 14px; font-weight: bold;");
   }
 })();

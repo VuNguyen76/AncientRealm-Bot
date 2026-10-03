@@ -1,29 +1,22 @@
-# Ancient Realm - Master Bot v15.3 (Khắc Chế Đánh Thường Boss & Lọc Quái 0/1 HP)
+# Ancient Realm - Master Bot v15.4 (Khắc Chế Độc Nghê Chúa & Né Chiêu Không Kẹt Đá)
 
-## 🌟 Tính Năng Mới Đột Phá Trong Bản v15.3
-1. **👑 Khắc Chế Triệt Để Tầm Đánh Thường Của Boss (Boss Basic Attack Danger Zone & Safe Kite Engine)**:
-   - **Vấn đề cốt lõi**: Đòn đánh thường của Boss (Basic Attack Swings) không hiện vòng cảnh báo đỏ (`tele`/`boom`) nhưng gây sát thương cực kỳ đau đớn ở cự ly tiếp cận (`range ~64-80px + r ~28-35px`). Nhân vật đứng trong tầm này dễ bị Boss quạt tay tử trận.
-   - **Bán kính đánh thường chuẩn xác**:
-     `bossNormalAtkRange = (def.range || 64) + (mob.r || def.r || 28) + 15` (~105px - 135px).
-   - **Ranged (Linh Mộc, Âm Dương, Sơn Thần)**:
-     * **Vùng Nguy Hiểm Đánh Thường (`bossDangerZone`)**: `bossNormalAtkRange + 30px` (~140px - 170px).
-     * **Cự Ly Thả Diều Vàng (`bossSafeKiteDist`)**: `Math.max(bossNormalAtkRange + 65, Math.round(baseRange * 0.82))` (~210px - 260px).
-     * Khi Boss tiến sát vào vùng nguy hiểm, bot tự động vào trạng thái `KITE_BOSS`, lùi bước ngược hướng di chuyển của Boss tới cự ly vàng ngoài tầm với của Boss rồi lập tức trụ chân xả chiêu liên tục (DPS turret) mà Boss không thể chạm tới!
-   - **Melee (Chiến Binh)**:
-     * Đánh ở viền mép tiếp cận tối đa (`reach`), theo dõi thời gian vung tay của Boss.
-     * Khi HP giảm xuống dưới 65%, bot chủ động lùi tạm thời ra ngoài bán kính đánh thường của Boss (`bossNormalAtkRange + 70px`) để cắn bình máu hồi phục an toàn trước khi quay lại giao tranh.
-   - **Quái thường**: Giữ nguyên cơ chế khóa tầm `keep_range = 0.88` không lùi bừa bãi.
+## 🌟 Tính Năng Mới Đột Phá Trong Bản v15.4
+1. **🦁 Nhận Diện Toàn Diện Boss "Nghê Chúa Động Thiên" & Quái Cấp Cao**:
+   - Tự động chuẩn hóa tiếng Việt loại bỏ dấu (`stripVN`): nhận diện tức thì mọi tên gọi Boss: `nghe`, `chua`, `dong thien`, `vuong`, `tuong`, `than`, `trum`, `thu linh`, `tinh`, `cau`,...
+   - Tự động phân loại Boss khi máu $ge 5000$ hoặc cấp $ge 45$.
+   - Kích hoạt cự ly thả diều vàng 210px - 260px cho phái đánh xa, tuyệt đối không bước vào hốc đá dưới chân Boss.
 
-2. **☠️ Triệt Tiêu Hoàn Toàn Quái 0 Máu & 1 Máu (Dead Mob Blacklist & Fast Target-Drop)**:
-   - **Hàm lọc `isMobAlive(m)`**: Loại bỏ triệt để mọi quái vật có `hp <= 1`, `st & 1` (cờ chết) hoặc `dead`.
-   - **Bắt gói tin mạng `die` và `hit` kết liễu**: Ngay khi server phát sóng `{ k: 'die', t: id }`, bot hủy target ngay lập tức, giải phóng `window.GAME.lockId = 0` và gửi `{ t: 'tg', id: 0 }` tới server.
-   - **Quét Snapshot `s.n` thời gian thực**: Mọi quái xuất hiện trong snapshot với `hp <= 1` hoặc `st & 1` được tự động gắn cờ chết và đưa vào **Dead Mob Blacklist 12s**.
+2. **🔥 Khắc Chế Đám Mây Độc & Lửa Tồn Lưu Sau Khi Nổ (Lingering Cloud Hazard Engine)**:
+   - Đám mây độc/khói lửa tím phát nổ từ Boss luôn được hệ thống theo dõi và duy trì vùng nguy hiểm ít nhất 2200ms sau vụ nổ (`handleBossBoom`).
+   - Bot không bao giờ bước trở lại vào đám mây khi lửa/khói độc còn đang bốc lên.
 
-3. **🎯 Khắc Phục Lỗi "Đi Ra Ngoài Tầm Đánh" Với Quái Thường (Keep-Range 0.88 Lock)**:
-   - Áp dụng chuẩn công thức `reach = Math.round((baseRange + targetRadius) * 0.88)`. Melee chém liên hoàn 75-95px, Ranged xả chiêu 250-300px.
+3. **🪨 Dò Đường Né Chiêu Thông Minh Không Bao Giờ Đâm Sầm Vào Đá (`findSafeDodgePoint` & `testProbe`)**:
+   - Tích hợp bộ giải mã chuẩn xác vật cản của server (`GAME.world.cols`): hình tròn `['c', x, y, r]`, hình hộp chữ nhật `['b', x0, y0, x1, y1]`, elip `['e', x, y, rx, ry]`.
+   - Thuật toán tìm điểm né chiêu quét 6 vòng bán kính kết hợp kiểm tra va chạm tĩnh (`isPointBlockedByCollider`) và tia dò đường (`testProbe`). Bot chỉ né vào những khoảng trống thực sự đi được, tuyệt đối không chọn điểm rơi nằm trong tảng đá!
+   - Thêm cơ chế giải phóng góc kẹt khi né chiêu: nếu phát hiện bị chặn bởi vách đá quá 250ms, bot tự động trượt theo phương tiếp tuyến 90 độ men theo gờ đá để thoát hiểm.
 
-4. **💀 Tự Động Hồi Sinh & Quay Lại Bãi Cũ (Auto-Revive & Recovery State Machine)**:
-   - Tử trận tự hồi sinh về Làng Phong Châu, tự ghé Dược Điếm mua máu/bán đồ rác nếu thiếu máu, tự động tìm đường qua các cổng bản đồ (`safeMapRoute`) quay lại bãi train.
+4. **👑 Khắc Chế Tầm Đánh Thường Của Boss (Boss Basic Attack Danger Zone & Safe Kite Engine)**:
+   - Tính toán bán kính đánh thường của Boss `bossNormalAtkRange = range + r + 20px`.
+   - Ranged xả đạn ở cự ly vàng ngoài tầm quạt tay của Boss, Melee lùi ngoài bán kính khi máu < 65% để cắn bình máu.
 
-5. **🧪 Smart Potion Engine 1200ms & 🛡️ Né Chiêu Đỏ Boss 2.5D**:
-   - Nhịp uống máu chuẩn 1200ms không nghẽn gói, né chiêu Boss Circle/Ring/Cone/Line chuẩn phối cảnh 2.5D mặt đất.
+5. **☠️ Triệt Tiêu Quái 0 Máu & 1 Máu, Khóa Tầm Đánh Quái Thường Keep-Range 0.88 & Tự Động Hồi Sinh**.

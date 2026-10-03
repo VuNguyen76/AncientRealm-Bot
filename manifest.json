@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Ancient Realm - Master Bot v15.3 (Khắc Chế Đánh Thường Boss & Lọc Quái 0/1 HP)",
-  "version": "15.3.0",
-  "description": "Khắc chế tầm đánh thường của Boss (Boss Normal Attack Danger Zone & Safe Kite Distance), triệt tiêu quái 0/1 máu, khóa tầm keep_range 0.88, tự động hồi sinh.",
+  "name": "Ancient Realm - Master Bot v15.4 (Khắc Chế Độc Nghê Chúa & Né Chiêu Không Kẹt Đá)",
+  "version": "15.4.0",
+  "description": "Nhận diện toàn diện Boss Nghê Chúa, khắc chế đám mây độc/lửa tồn lưu, né chiêu theo đường thoát tự do không kẹt đá, né tầm đánh thường của Boss.",
   "author": "Antigravity",
   "icons": {
     "48": "icon48.png",
