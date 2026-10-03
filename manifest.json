@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Ancient Realm - Master Bot v13.8 (Mobile & PC)",
-  "version": "13.8.0",
-  "description": "Tự động bán rác khi đầy túi, tự động mua bình máu, quay lại bãi farm ban đầu; Tương thích Mobile & PC.",
+  "name": "Ancient Realm - Master Bot v13.9 (Global Dynamic)",
+  "version": "13.9.0",
+  "description": "Hệ thống toàn cầu động: Tự nhận diện mọi Shop NPC trong 26 map, chống lặp cổng khi làm nhiệm vụ, thích ứng quái mới, hỗ trợ cả 5 phái.",
   "author": "Antigravity",
   "icons": {
     "48": "icon48.png",

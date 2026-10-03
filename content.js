@@ -1,4 +1,4 @@
-// AncientRealm Online - Master Bot v13.8 (Anti-Pin, Aggro Retaliation & Roadblock Clear)
+// AncientRealm Online - Master Bot v13.9 (Anti-Pin, Aggro Retaliation & Roadblock Clear)
 // ĐÁP ỨNG CHÍNH XÁC 100% YÊU CẦU CỦA SẾP:
 // 1. KHẮC PHỤC TRIỆT ĐỂ TÌNH TRẠNG "VÂY KHÔNG ĐI ĐƯỢC" (BỊ ÉP VÀO GỐC CÂY / VÁCH ĐÁ):
 //    - Vector Đẩy Lùi Vật Thể Tĩnh (Static Obstacle Repulsion):
@@ -85,8 +85,10 @@
     castGateMinImpactTime: 450,
     autoPotion: true,
 
-    // Auto-Shop & Return to Farm Settings (v13.8)
+    // Auto-Shop & Return to Farm Settings (v13.9)
     autoShop: true,
+    autoShopSameMapOnly: false, // Tùy chọn giữ bãi: Chỉ bán khi có Shop cùng map, không nhảy cổng
+    autoShopMaxHops: 3, // Giới hạn số cổng tối đa được phép đi (tránh đi lang thang)
     autoShopFreeSlotTrigger: 1, // Hành trang còn <= 1 ô trống -> Đi bán rác & nguyên liệu
     autoShopHpPotionTrigger: 2, // Còn <= 2 bình máu -> Đi nạp bình máu
     autoShopMinPotionsToBuy: 20 // Số bình máu muốn nạp đủ
@@ -116,19 +118,18 @@
   const activeTelegraphs = [];
   let capturedDrops = [];
 
+  // Chống lặp cổng (Anti-Ping-Pong) & Chuyển map thông minh
+  let lastZoneTransitionTime = 0;
+  let lastArrivedPortalCoords = null;
+
   // Theo dõi kẹt địa hình
   let lastPosCheck = { x: 0, y: 0, t: 0 };
   let isCurrentlyStuck = false;
   let stuckEscapeDir = null;
   let stuckUntil = 0;
 
-  const skillTimers = {
-    ad_loiphu: 0,
-    ad_hoalong: 0,
-    ad_nguhanh: 0,
-    ad_thuykinh: 0,
-    ad_thienloi: 0
-  };
+  // Bộ đếm hồi chiêu động toàn cục cho mọi kỹ năng (cả 5 phái)
+  const skillTimers = {};
 
   function getPlayerHp() {
     const snaps = window.GAME?.net?.snaps;
@@ -645,7 +646,7 @@
 
     return {
       target: null,
-      navigatingSpawn: spawns.length > 0 ? spawns[0] : null,
+      navigatingSpawn: (spawns.length > 0 && cfgTarget !== 'all') ? spawns[0] : null,
       dMin: dMin === Infinity ? 999 : dMin,
       closestMob,
       pursuers: pursuers.map(p => p.mob),
@@ -663,7 +664,13 @@
     const me = window.GAME?.me;
     if (!me) return;
 
-    const allowedSkills = new Set(window.GAME?.self?.loadout || []);
+    const self = window.GAME?.self;
+    const GD = window.GAME?.GD || {};
+    const currentLoadout = self?.loadout || [];
+    const currentMp = self?.mp || 500;
+    const myClass = self?.class || 'amduong';
+    const clsData = GD.classList?.find(c => c.id === myClass) || GD.classes?.[myClass] || {};
+    const baseRange = clsData.range || (['thienvuong', 'longtuyen'].includes(myClass) ? 95 : 280);
 
     const dx = target.x - me.x, dy = target.y - me.y;
     const len = Math.hypot(dx, dy) || 1;
@@ -673,76 +680,74 @@
     me.facing = dx >= 0 ? 1 : -1;
     window.GAME.net.send({ t: 'tg', id: target.id });
 
-    // Tính toán an toàn thi triển chiêu có cast time
+    // 1. DUYỆT TỰ ĐỘNG CÁC CHIÊU BUFF / PHÒNG THỦ / HỒI PHỤC (range === 0 hoặc buff)
+    for (const skId of currentLoadout) {
+      const skDef = GD.skills?.[skId];
+      if (!skDef) continue;
+      const isBuff = skDef.range === 0 || skDef.buff || skDef.heal || skDef.shield || ['thuykinh', 'hoixuan', 'hoathan', 'kimquy', 'ungnhan', 'cotrang', 'hotran'].some(k => skId.includes(k));
+      if (isBuff) {
+        const cd = skDef.cd || 20000;
+        const lastCast = skillTimers[skId] || 0;
+        const needBuff = (skId.includes('hoixuan') || skId.includes('cotrang'))
+          ? ((self?.hp || 1) / (self?.maxHp || 1) < 0.75 || isEmergencyBreakout)
+          : (distToTarget <= 320 || dMin <= 240 || isEmergencyBreakout || isPvP);
+
+        if (now - lastCast >= cd + 50 && currentMp >= (skDef.mp || 0) && needBuff) {
+          window.GAME.net.send({ t: 'sk', s: skId, id: 0, x: 0, y: 0 });
+          skillTimers[skId] = now;
+          devState.totalSkills++;
+          if (devState.skillsBreakdown[skId] !== undefined) devState.skillsBreakdown[skId]++;
+          else devState.skillsBreakdown[skId] = 1;
+        }
+      }
+    }
+
+    if (now < localCastUntil) return;
+
+    // 2. TÍNH TOÁN AN TOÀN KHI NIỆM CHIÊU CÓ CAST TIME
     const closestDef = getMobDef(closestMob);
     const closestSpeed = closestDef?.speed || 130;
     const closestAtkRange = (closestDef?.range || 64) + (closestDef?.r || 28) + 15;
     const distToAtkRange = Math.max(0, dMin - closestAtkRange);
     const timeToImpactMs = (distToAtkRange / closestSpeed) * 1000;
-
     const nextAllowedSwing = mobSwingCooldowns.get(closestMob?.id) || 0;
     const isClosestMobOnSwingCd = now < nextAllowedSwing;
     const swingCdRemainingMs = Math.max(0, nextAllowedSwing - now);
-
     const isSafeForCastTime = isPvP ? (distToTarget >= 160 || isEmergencyBreakout) : ((timeToImpactMs >= cfg.castGateMinImpactTime) || (isClosestMobOnSwingCd && swingCdRemainingMs >= 400));
-    const isBoss = !!(getMobDef(target)?.boss || getMobDef(target)?.elite || target.kind === 'chantinh' || target.kind === 'daibang');
 
-    // SKILL 4 [ẨN 1]: THỦY KÍNH (Buff 60% giáp + hồi phục)
-    // Trong PvP: Bật NGAY khi đối thủ trong tầm 320px để buff giáp và hồi máu liên tục!
-    if (allowedSkills.has('ad_thuykinh') && now - skillTimers.ad_thuykinh >= 20050 && (distToTarget <= 320 || dMin <= 240 || isEmergencyBreakout || isPvP)) {
-      window.GAME.net.send({ t: 'sk', s: 'ad_thuykinh', id: 0, x: 0, y: 0 });
-      skillTimers.ad_thuykinh = now;
-      devState.totalSkills++;
-      devState.skillsBreakdown.thuykinh++;
+    // 3. DUYỆT TỰ ĐỘNG CÁC CHIÊU TẤN CÔNG (ƯU TIÊN CHIÊU CÓ CD LỚN -> NHỎ)
+    const offensiveSkills = currentLoadout
+      .map(skId => ({ id: skId, def: GD.skills?.[skId] }))
+      .filter(s => s.def && s.def.range !== 0 && !['thuykinh', 'hoixuan', 'hoathan', 'kimquy', 'ungnhan', 'cotrang', 'hotran'].some(k => s.id.includes(k)))
+      .sort((a, b) => (b.def.cd || 0) - (a.def.cd || 0));
+
+    for (const s of offensiveSkills) {
+      const skId = s.id;
+      const skDef = s.def;
+      const cd = skDef.cd || 5000;
+      const lastCast = skillTimers[skId] || 0;
+      const skRange = skDef.range || baseRange;
+      const castTime = skDef.cast || 0;
+
+      if (now - lastCast >= cd + 50 && currentMp >= (skDef.mp || 0) && distToTarget <= skRange + 35) {
+        if (castTime > 0 && !isSafeForCastTime && !isEmergencyBreakout) {
+          continue; // Bỏ qua chiêu có thời gian niệm nếu quái đang áp sát đánh trúng
+        }
+        window.GAME.net.send({ t: 'sk', s: skId, id: target.id, x: nx, y: ny });
+        skillTimers[skId] = now;
+        if (castTime > 0) {
+          localCastUntil = now + castTime + 100;
+        }
+        devState.totalSkills++;
+        if (devState.skillsBreakdown[skId] !== undefined) devState.skillsBreakdown[skId]++;
+        else devState.skillsBreakdown[skId] = 1;
+        return;
+      }
     }
 
-    if (now < localCastUntil) return;
-
-    // SKILL 5 [ẨN 2]: THIÊN LÔI GIÁNG THẾ (460% AOE + CHOÁNG 0.8s)
-    // Trong PvP: Chiêu sốc sát thương và khống chế ngắt chiêu tối thượng!
-    const shouldCastThienLoi = isPvP ? (distToTarget <= 320 && isSafeForCastTime) : ((isBoss || pursuerCount >= 2 || isEmergencyBreakout) && distToTarget <= 320 && (isSafeForCastTime || isEmergencyBreakout));
-    if (allowedSkills.has('ad_thienloi') && now - skillTimers.ad_thienloi >= 45050 && shouldCastThienLoi) {
-      window.GAME.net.send({ t: 'sk', s: 'ad_thienloi', id: target.id, x: nx, y: ny });
-      skillTimers.ad_thienloi = now;
-      localCastUntil = now + 700;
-      devState.totalSkills++;
-      devState.skillsBreakdown.thienloi++;
-      return;
-    }
-
-    // SKILL 3: NGŨ HÀNH LUÂN CHUYỂN (AOE 312% + CHOÁNG 1.2s)
-    // Trong PvP: Vũ khí phòng thủ khống chế số 1 chống cận chiến khi đối thủ áp sát <= 210px!
-    const shouldCastNguHanh = isPvP ? (distToTarget <= 210 || isEmergencyBreakout) : (distToTarget <= 220 || isEmergencyBreakout || dMin <= 100);
-    if (allowedSkills.has('ad_nguhanh') && now - skillTimers.ad_nguhanh >= 20050 && shouldCastNguHanh) {
-      window.GAME.net.send({ t: 'sk', s: 'ad_nguhanh', id: target.id, x: nx, y: ny });
-      skillTimers.ad_nguhanh = now;
-      localCastUntil = now + 600;
-      devState.totalSkills++;
-      devState.skillsBreakdown.nguhanh++;
-      return;
-    }
-
-    // SKILL 1: LÔI PHÙ (TỨC THỜI 0ms, 2.0s CD, 252% DAMAGE) -> Spam liên tục trong PvP & PvE
-    if (allowedSkills.has('ad_loiphu') && now - skillTimers.ad_loiphu >= 2050 && distToTarget <= 320) {
-      window.GAME.net.send({ t: 'sk', s: 'ad_loiphu', id: target.id, x: nx, y: ny });
-      skillTimers.ad_loiphu = now;
-      devState.totalSkills++;
-      devState.skillsBreakdown.loiphu++;
-    }
-
-    // SKILL 2: HỎA LONG TRẬN (CD 7.0s, AOE 228%)
-    if (allowedSkills.has('ad_hoalong') && now - skillTimers.ad_hoalong >= 7100 && distToTarget <= 300 && isSafeForCastTime) {
-      window.GAME.net.send({ t: 'sk', s: 'ad_hoalong', id: target.id, x: nx, y: ny });
-      skillTimers.ad_hoalong = now;
-      localCastUntil = now + 400;
-      devState.totalSkills++;
-      devState.skillsBreakdown.hoalong++;
-      return;
-    }
-
-    // ĐÒN ĐÁNH THƯỜNG
-    const atkCd = 380;
-    if (now - lastAtkTime >= atkCd && distToTarget <= maxRange) {
+    // 4. ĐÒN ĐÁNH CƠ BẢN (AUTO-ATTACK)
+    const atkCd = clsData.atkMs ? Math.max(300, clsData.atkMs * 0.45) : 380;
+    if (now - lastAtkTime >= atkCd && distToTarget <= baseRange + 45) {
       window.GAME.net.send({ t: 'atk', id: target.id, x: nx, y: ny });
       lastAtkTime = now;
       devState.totalAttacks++;
@@ -836,16 +841,32 @@
   // =========================================================================
 
   // =========================================================================
-  // HỆ THỐNG TỰ ĐỘNG BÁN ĐỒ RÁC & NẠP BÌNH MÁU & QUAY LẠI BÃI FARM (v13.8 AUTO-SHOP ENGINE)
+  // HỆ THỐNG TỰ ĐỘNG BÁN ĐỒ RÁC & NẠP BÌNH MÁU TOÀN CẦU (v13.9 DYNAMIC ZERO-HARDCODE)
   // =========================================================================
-  const SHOP_NPCS = [
-    { zone: 'coloa', npcId: 'hangthanh', name: 'Cô Hàng Thành', x: 1000, y: 760, sellsHp4: true },
-    { zone: 'mieu', npcId: 'hanghuong', name: 'Cô Hàng Hương', x: 960, y: 730, sellsHp4: true },
-    { zone: 'banmuong', npcId: 'hangmuong', name: 'Chị Hàng Bản', x: 1000, y: 800, sellsHp4: false },
-    { zone: 'chuxa', npcId: 'bahangca', name: 'Bà Hàng Cá', x: 1180, y: 780, sellsHp4: false },
-    { zone: 'lang', npcId: 'banhang', name: 'Bà Hàng Nước', x: 1090, y: 770, sellsHp4: false },
-    { zone: 'lang', npcId: 'thoren', name: 'Thợ Rèn Đồng Sơn', x: 440, y: 760, sellsHp4: false }
-  ];
+
+  function getAllShopsFromGD() {
+    const GD = window.GAME?.GD || {};
+    const shops = [];
+    for (const [zoneId, zData] of Object.entries(GD.zones || {})) {
+      for (const npc of zData.npcs || []) {
+        if (npc.shop && Array.isArray(npc.shop) && npc.shop.length > 0) {
+          const sellsHp = npc.shop.some(i => i.startsWith('p_hp'));
+          const sellsHpBetter = npc.shop.some(i => ['p_hp4', 'p_hp5'].includes(i));
+          shops.push({
+            zone: zoneId,
+            npcId: npc.id,
+            name: npc.name || npc.id,
+            x: npc.x,
+            y: npc.y,
+            shop: npc.shop,
+            sellsHp,
+            sellsHpBetter
+          });
+        }
+      }
+    }
+    return shops;
+  }
 
   const autoShopState = {
     active: false,
@@ -899,18 +920,32 @@
     return out;
   }
 
-  function findNearestShop(fromZone) {
-    let best = null;
-    for (const s of SHOP_NPCS) {
+  function findDynamicGlobalShop(fromZone, maxHops = 99) {
+    const allShops = getAllShopsFromGD();
+    if (!allShops.length) return null;
+
+    // 1. Kiểm tra có shop ngay trong map hiện tại không (0 hops - TỐI ƯU NHẤT)
+    const localShop = allShops.find(s => s.zone === fromZone && s.sellsHp);
+    if (localShop) {
+      return { ...localShop, hops: 0, route: [] };
+    }
+
+    // Nếu người chơi chọn giữ map (sameMapOnly) hoặc maxHops === 0 -> Không rời map
+    if (cfg.autoShopSameMapOnly || maxHops === 0) return null;
+
+    // 2. Tìm shop gần nhất qua các cổng an toàn (BFS)
+    let bestShop = null;
+    for (const s of allShops) {
+      if (!s.sellsHp) continue;
       const r = safeMapRoute(fromZone, s.zone);
-      if (r !== null) {
+      if (r !== null && r.length <= maxHops) {
         const hops = r.length;
-        if (!best || hops < best.hops || (hops === best.hops && s.sellsHp4 && !best.sellsHp4)) {
-          best = { ...s, hops, route: r };
+        if (!bestShop || hops < bestShop.hops || (hops === bestShop.hops && s.sellsHpBetter && !bestShop.sellsHpBetter)) {
+          bestShop = { ...s, hops, route: r };
         }
       }
     }
-    return best;
+    return bestShop;
   }
 
   function inspectInventory() {
@@ -978,9 +1013,14 @@
     const me = window.GAME?.me;
     if (!me) return;
 
-    const targetShop = findNearestShop(curZone);
+    const maxHops = cfg.autoShopSameMapOnly ? 0 : (cfg.autoShopMaxHops || 3);
+    const targetShop = findDynamicGlobalShop(curZone, maxHops);
     if (!targetShop) {
-      console.warn('[AUTO-SHOP] Không tìm thấy shop nào kết nối với map hiện tại:', curZone);
+      if (cfg.autoShopSameMapOnly) {
+        logShopEvent(`ℹ️ Map ${curZone} không có Shop. Đang bật [Chỉ bán trong map] để làm nhiệm vụ, bot không tự ý rời map.`);
+      } else {
+        logShopEvent(`⚠️ Không tìm thấy Shop an toàn trong phạm vi ${maxHops} cổng từ ${curZone}. Tiếp tục giữ bãi train.`);
+      }
       return;
     }
 
@@ -991,20 +1031,25 @@
     autoShopState.farmTargetMob = cfg.targetMob;
     autoShopState.shopNpc = targetShop;
     autoShopState.shopZone = targetShop.zone;
-    autoShopState.routeToShop = targetShop.route;
+    autoShopState.routeToShop = targetShop.route || [];
     autoShopState.soldItemsCount = 0;
     autoShopState.goldEarned = 0;
     autoShopState.boughtPotionsCount = 0;
-    autoShopState.statusText = `🚚 Bắt đầu đi bán đồ tại ${targetShop.name} (${targetShop.zone}, ${targetShop.hops} cổng)`;
 
-    logShopEvent(`🛒 Bắt đầu chuyến đi bán đồ & nạp máu tại ${targetShop.name} (${targetShop.zone}). Bãi farm: ${curZone} (${autoShopState.farmPos.x}, ${autoShopState.farmPos.y})`);
+    if (targetShop.hops === 0) {
+      autoShopState.statusText = `🚚 Đi bán đồ tại ${targetShop.name} (Cùng map ${targetShop.zone})`;
+      logShopEvent(`🛒 Ghé ${targetShop.name} ngay trong map ${curZone} để bán đồ & nạp máu.`);
+    } else {
+      autoShopState.statusText = `🚚 Bắt đầu đi bán đồ tại ${targetShop.name} (${targetShop.zone}, ${targetShop.hops} cổng)`;
+      logShopEvent(`🛒 Đi bán đồ & nạp máu tại ${targetShop.name} (${targetShop.zone}, ${targetShop.hops} cổng). Bãi farm: ${curZone} (${autoShopState.farmPos.x}, ${autoShopState.farmPos.y})`);
+    }
   }
 
   function handleAutoShopStep(me, now, invInfo) {
     const curZone = window.GAME?.world?.zone?.id;
     if (!curZone) return;
 
-    // 1. Tự bảo vệ khi bị quái áp sát lúc đang đi chuyển
+    // 1. Tự bảo vệ khi bị quái áp sát lúc đang di chuyển
     const dangerTele = activeTelegraphs.find(t => Math.hypot(t.x - me.x, t.y - me.y) < t.r + 25);
     if (dangerTele) {
       const angle = Math.atan2(me.y - dangerTele.y, me.x - dangerTele.x);
@@ -1020,10 +1065,20 @@
       return (!min || d < min.d) ? { mob: m, d } : min;
     }, null);
 
-    if (closestMob && closestMob.d < 220 && now - skillTimers.ad_thuykinh >= 20050) {
-      window.GAME.net.send({ t: 'sk', s: 'ad_thuykinh', id: 0, x: 0, y: 0 });
-      skillTimers.ad_thuykinh = now;
-      devState.skillsBreakdown.thuykinh++;
+    // Kích hoạt chiêu phòng thủ khẩn cấp nếu bị quái chặn đường
+    if (closestMob && closestMob.d < 180) {
+      const self = window.GAME?.self;
+      const currentLoadout = self?.loadout || [];
+      for (const skId of currentLoadout) {
+        if (['thuykinh', 'hoixuan', 'hoathan', 'kimquy', 'ungnhan'].some(k => skId.includes(k))) {
+          if (now - (skillTimers[skId] || 0) >= 20050) {
+            window.GAME.net.send({ t: 'sk', s: skId, id: 0, x: 0, y: 0 });
+            skillTimers[skId] = now;
+            devState.totalSkills++;
+            break;
+          }
+        }
+      }
     }
 
     // Phase 1: TRAVEL_TO_SHOP
@@ -1049,26 +1104,25 @@
         return;
       }
 
-      // Chưa tới map shop -> Tìm cổng kế tiếp
-      let step = autoShopState.routeToShop ? autoShopState.routeToShop.find(s => s.from === curZone) : null;
-      if (!step) {
-        const reRoute = safeMapRoute(curZone, autoShopState.shopZone);
-        if (reRoute && reRoute.length > 0) {
-          autoShopState.routeToShop = reRoute;
-          step = reRoute[0];
-        } else {
-          console.warn('[AUTO-SHOP] Mất dấu đường tới Shop! Hủy bỏ Auto-Shop.');
-          autoShopState.active = false;
-          return;
-        }
+      // Chưa tới map shop -> Tính đường đi động từ curZone
+      const curRoute = safeMapRoute(curZone, autoShopState.shopZone);
+      if (!curRoute || curRoute.length === 0) {
+        console.warn('[AUTO-SHOP] Mất dấu đường tới Shop! Hủy bỏ Auto-Shop.');
+        logShopEvent(`⚠️ Mất dấu đường tới Shop từ map ${curZone}! Hủy bỏ Auto-Shop để an toàn.`);
+        autoShopState.active = false;
+        return;
       }
 
+      const step = curRoute[0];
       const pX = step.portal.x, pY = step.portal.y;
       const distPortal = Math.hypot(pX - me.x, pY - me.y);
 
-      if (distPortal <= 45) {
+      // Chống lặp cổng (Anti-Ping-Pong): Không bước vào cổng nếu vừa mới đến map trong 1500ms
+      const isTransitionImmune = (now - lastZoneTransitionTime < 1500);
+
+      if (distPortal <= 45 && !isTransitionImmune) {
         setSteeringVector(pX - me.x, pY - me.y);
-        autoShopState.statusText = `🚪 Đang qua cổng sang ${step.to}...`;
+        autoShopState.statusText = `🚪 Bước qua cổng sang ${step.to}...`;
         if (statusTxt) statusTxt.textContent = autoShopState.statusText;
         return;
       }
@@ -1118,6 +1172,7 @@
         if (statusTxt) statusTxt.textContent = autoShopState.statusText;
       } else {
         console.warn('[AUTO-SHOP] Không tìm thấy đường về bãi farm!');
+        logShopEvent(`⚠️ Không tìm thấy đường về bãi farm từ ${curZone}!`);
         autoShopState.active = false;
       }
       return;
@@ -1130,10 +1185,10 @@
       const GD = window.GAME?.GD || {};
       
       const shopNpcData = window.GAME?.world?.zone?.npcs?.find(n => n.id === autoShopState.shopNpc.npcId);
-      const shopItems = shopNpcData?.shop || [];
+      const shopItems = shopNpcData?.shop || autoShopState.shopNpc?.shop || [];
       
       let bestPotion = null;
-      for (const pid of ['p_hp4', 'p_hp3', 'p_hp2', 'p_hp1']) {
+      for (const pid of ['p_hp5', 'p_hp4', 'p_hp3', 'p_hp2', 'p_hp1']) {
         if (shopItems.includes(pid)) {
           bestPotion = pid;
           break;
@@ -1197,26 +1252,23 @@
         return;
       }
 
-      // Đang qua các map trung gian
-      let step = autoShopState.routeToFarm ? autoShopState.routeToFarm.find(s => s.from === curZone) : null;
-      if (!step) {
-        const reRoute = safeMapRoute(curZone, autoShopState.farmZone);
-        if (reRoute && reRoute.length > 0) {
-          autoShopState.routeToFarm = reRoute;
-          step = reRoute[0];
-        } else {
-          console.warn('[AUTO-SHOP] Mất dấu đường về bãi farm!');
-          autoShopState.active = false;
-          return;
-        }
+      // Đang qua các map trung gian -> Tính đường đi động từ curZone
+      const curReturnRoute = safeMapRoute(curZone, autoShopState.farmZone);
+      if (!curReturnRoute || curReturnRoute.length === 0) {
+        console.warn('[AUTO-SHOP] Mất dấu đường về bãi farm! Dừng auto-shop tại map:', curZone);
+        logShopEvent(`⚠️ Không tìm thấy đường về ${autoShopState.farmZone} từ ${curZone}! Dừng tại chỗ để an toàn.`);
+        autoShopState.active = false;
+        return;
       }
 
+      const step = curReturnRoute[0];
       const pX = step.portal.x, pY = step.portal.y;
       const distPortal = Math.hypot(pX - me.x, pY - me.y);
+      const isTransitionImmune = (now - lastZoneTransitionTime < 1500);
 
-      if (distPortal <= 45) {
+      if (distPortal <= 45 && !isTransitionImmune) {
         setSteeringVector(pX - me.x, pY - me.y);
-        autoShopState.statusText = `🚪 Đang qua cổng sang ${step.to}...`;
+        autoShopState.statusText = `🚪 Bước qua cổng sang ${step.to}...`;
         if (statusTxt) statusTxt.textContent = autoShopState.statusText;
         return;
       }
@@ -1229,7 +1281,7 @@
     }
   }
 
-    const botPanel = document.createElement('div');
+  const botPanel = document.createElement('div');
   botPanel.id = 'ancient-master-bot-v13';
   botPanel.innerHTML = `
     <div style="position: fixed; top: 75px; right: 15px; width: 330px; background: rgba(14, 18, 26, 0.92);
@@ -1241,7 +1293,7 @@
                   cursor: grab; font-weight: bold; color: #fff; display: flex; justify-content: space-between;
                   align-items: center; border-top-left-radius: 7px; border-top-right-radius: 7px; user-select: none;">
         <div style="display: flex; align-items: center; gap: 6px;">
-          <span>🔮 BOT v13.8 (SMART AUTO-SELL, POTION REFILL & RETURN FARM)</span>
+          <span>🔮 BOT v13.9 (SMART AUTO-SELL, POTION REFILL & RETURN FARM)</span>
         </div>
         <div style="display: flex; gap: 5px; align-items: center;">
           <button id="sm-btn-min" title="Thu gọn giao diện" style="background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25); color: #fff; border-radius: 3px; cursor: pointer; width: 20px; height: 18px; font-size: 11px; line-height: 1; display: flex; align-items: center; justify-content: center;">—</button>
@@ -1342,7 +1394,7 @@
                 border-radius: 20px; padding: 4px 12px; color: #fff; font-family: 'Segoe UI', Tahoma, sans-serif;
                 font-size: 11px; z-index: 999999; box-shadow: 0 4px 16px rgba(0,0,0,0.6); backdrop-filter: blur(8px);
                 display: none; align-items: center; gap: 8px; cursor: grab; user-select: none;">
-      <span id="sm-mini-status">🟢 Bot v13.8</span>
+      <span id="sm-mini-status">🟢 Bot v13.9</span>
       <span style="color: #ffd76a;">⚔️ <b id="sm-mini-atk">0</b></span>
       <span style="color: #ff8a80;">🛡️ <b id="sm-mini-breakout">0</b></span>
       <span id="sm-mini-state" style="color: #80d8ff; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Khởi tạo...</span>
@@ -1728,7 +1780,22 @@
     const zone = window.GAME?.world?.zone;
     if (zone && zone.id !== lastZoneId) {
       lastZoneId = zone.id;
+      lastZoneTransitionTime = now;
+      lastArrivedPortalCoords = { x: me.x, y: me.y };
       populateMobSelect();
+
+      // Nếu quái đã chọn không tồn tại trong map mới -> Tự động chuyển về [all]
+      if (cfg.targetMob !== 'all') {
+        const spawnsInNewMap = zone.spawns || [];
+        const mobsInNewMap = Array.from(window.GAME?.mobs?.values() || []);
+        const exists = spawnsInNewMap.some(s => s.mob === cfg.targetMob) || mobsInNewMap.some(m => m.kind === cfg.targetMob);
+        if (!exists) {
+          cfg.targetMob = 'all';
+          const mobSel = botPanel.querySelector('#sm-mob-sel');
+          if (mobSel) mobSel.value = 'all';
+          console.log(`[BOT] Map mới (${zone.name || zone.id}) không có quái '${cfg.targetMob}', tự động chuyển về [Tất Cả Quái].`);
+        }
+      }
     }
 
     // Hiển thị Loadout
@@ -1763,7 +1830,7 @@
     }
 
     // ==========================================
-    // AUTO-SHOP & POTION REFILL CONTROLLER (v13.8)
+    // AUTO-SHOP & POTION REFILL CONTROLLER (v13.9)
     // ==========================================
     if (cfg.autoShop) {
       const invInfo = inspectInventory();
@@ -1915,31 +1982,38 @@
     }
 
     let retreatTrigger, retreatSafe, approachTrigger, approachStop;
+    const selfCls = window.GAME?.self?.class || 'amduong';
+    const isPlayerMelee = ['thienvuong', 'longtuyen'].includes(selfCls);
+
     if (state.isPvP) {
       if (state.isMeleeOpponent) {
-        // Cận chiến (Thiên Vương, Long Tuyền): Giữ cự ly vàng 240px - 280px, né tầm húc và chém
-        retreatTrigger = 220;
-        retreatSafe = 265;
-        approachTrigger = 310;
-        approachStop = 250;
+        retreatTrigger = isPlayerMelee ? 60 : 220;
+        retreatSafe = isPlayerMelee ? 85 : 265;
+        approachTrigger = isPlayerMelee ? 110 : 310;
+        approachStop = isPlayerMelee ? 65 : 250;
       } else if (state.isRangedOpponent) {
-        // Xạ thủ tầm xa (Sơn Thần, Linh Mộc): Giữ 260px - 290px
-        retreatTrigger = 230;
-        retreatSafe = 280;
-        approachTrigger = 320;
-        approachStop = 260;
+        retreatTrigger = isPlayerMelee ? 70 : 230;
+        retreatSafe = isPlayerMelee ? 95 : 280;
+        approachTrigger = isPlayerMelee ? 130 : 320;
+        approachStop = isPlayerMelee ? 70 : 260;
       } else {
-        // Pháp sư Âm Dương
-        retreatTrigger = 220;
-        retreatSafe = 270;
-        approachTrigger = 310;
-        approachStop = 255;
+        retreatTrigger = isPlayerMelee ? 60 : 220;
+        retreatSafe = isPlayerMelee ? 85 : 270;
+        approachTrigger = isPlayerMelee ? 110 : 310;
+        approachStop = isPlayerMelee ? 65 : 255;
       }
     } else {
-      retreatTrigger = state.isBoss ? cfg.retreatTriggerDistBoss : cfg.retreatTriggerDistMob;
-      retreatSafe = state.isBoss ? cfg.retreatSafeDistBoss : cfg.retreatSafeDistMob;
-      approachTrigger = state.isBoss ? cfg.approachTriggerDistBoss : cfg.approachTriggerDistMob;
-      approachStop = state.isBoss ? cfg.approachStopDistBoss : cfg.approachStopDistMob;
+      if (isPlayerMelee) {
+        retreatTrigger = state.isBoss ? 70 : 55;
+        retreatSafe = state.isBoss ? 95 : 80;
+        approachTrigger = state.isBoss ? 130 : 110;
+        approachStop = state.isBoss ? 75 : 65;
+      } else {
+        retreatTrigger = state.isBoss ? cfg.retreatTriggerDistBoss : cfg.retreatTriggerDistMob;
+        retreatSafe = state.isBoss ? cfg.retreatSafeDistBoss : cfg.retreatSafeDistMob;
+        approachTrigger = state.isBoss ? cfg.approachTriggerDistBoss : cfg.approachTriggerDistMob;
+        approachStop = state.isBoss ? cfg.approachStopDistBoss : cfg.approachStopDistMob;
+      }
     }
             
     // Phá vây khẩn cấp nếu bị ép sát vách đá
@@ -2030,7 +2104,7 @@
     // Xả kỹ năng: Khi bị vây khẩn cấp, kích hoạt Choáng diện rộng ngay lập tức!
     executeOracleAttack(targetMob, now, distToTarget, state.dMin, state.closestMob, state.pursuerCount, isPinnedAgainstWall, state.isPvP);
 
-    if (miniStatusEl) miniStatusEl.textContent = cfg.enabled ? '🟢 Bot v13.8' : '🔴 Tạm dừng';
+    if (miniStatusEl) miniStatusEl.textContent = cfg.enabled ? '🟢 Bot v13.9' : '🔴 Tạm dừng';
     if (miniAtkEl) miniAtkEl.textContent = devState.totalAttacks;
     if (miniBreakoutEl) miniBreakoutEl.textContent = devState.breakoutsTriggered;
     if (miniStateEl && statusTxt) miniStateEl.textContent = statusTxt.textContent;
@@ -2038,7 +2112,7 @@
 
 
   window._ancientMasterBot = {
-    version: '13.8',
+    version: '13.9',
     cfg,
     devState,
     skillTimers,
@@ -2063,10 +2137,10 @@
       if (origUiChatLine && window.GAME?.ui) window.GAME.ui.chatLine = origUiChatLine;
       if (origUiToggleChat && window.GAME?.ui) window.GAME.ui.toggleChat = origUiToggleChat;
       delete window._ancientMasterBot;
-      console.log("%c[BOT v13.8] Đã gỡ bỏ toàn bộ giao diện và tiến trình.", "color: #ff9800; font-weight: bold;");
+      console.log("%c[BOT v13.9] Đã gỡ bỏ toàn bộ giao diện và tiến trình.", "color: #ff9800; font-weight: bold;");
     }
   };
 
-    console.log("%c[BOT v13.8] KHỞI ĐỘNG THÀNH CÔNG: SMART AUTO-SHOP, PVP SOLO & MOBILE RESPONSIVE UI!", "color: #00e676; font-size: 14px; font-weight: bold;");
+    console.log("%c[BOT v13.9] KHỞI ĐỘNG THÀNH CÔNG: SMART AUTO-SHOP, PVP SOLO & MOBILE RESPONSIVE UI!", "color: #00e676; font-size: 14px; font-weight: bold;");
   }
 })();
