@@ -2118,7 +2118,7 @@
     skillTimers,
     autoShopState,
     inspectInventory,
-    findNearestShop,
+    findDynamicGlobalShop,
     triggerShopTrip,
 
     populateMobSelect,
