@@ -1,22 +1,34 @@
-# Ancient Realm - Master Bot v15.8 (Kiến Trúc CoViet: Triệt Tiêu Freeze Đứng Im, Target Scoring Chuẩn & Immediate Combat Fallback)
+# Ancient Realm - Master Bot v15.9 (Khắc Phục Over Tầm, Quét Sạch Quái 0 Máu, Chuyên Trị Boss & Kiting Đỉnh Cao)
 
-## 🌟 Tính Năng Đột Phá Trong Bản v15.8.0 (Học Hỏi Kiến Trúc CoViet)
-1. **🛡️ Triệt Tiêu Hoàn Toàn Lỗi Freeze Đứng Im Chôn Chân (Dead Mob Poisoning Bug)**:
-   - Nghiên cứu từ `sync.js` của dự án CoViet: Ancient Realm tái sử dụng ID quái cũ khi quái hồi sinh (respawn). Bộ đệm `deadMobIds` tĩnh trước đây đã vĩnh viễn khóa chết quái hồi sinh, khiến bot tưởng rằng không còn quái nào trên bản đồ và đứng im với thông báo *"Chờ xuất hiện..."*.
-   - Bản v15.8 xóa bỏ hoàn toàn `deadMobIds`, đồng bộ cờ sống chết theo đúng chuẩn gói tin mạng: `!(m.st & 1) && m.hp > 0`. Khi quái vừa hồi sinh, cờ `mb.dead` được khôi phục về `false` ngay lập tức trên snapshot.
+## 🌟 Cải Tiến Đột Phá Trong Bản v15.9.0
 
-2. **🎯 Bộ Điều Phối Mục Tiêu CoViet Target Scoring (`hunt.js` Standard)**:
-   - Xếp hạng ưu tiên mục tiêu theo thang điểm chính xác:
-     * **👑 Boss / Elite**: Ưu tiên tuyệt đối (-1000 điểm).
-     * **⚔️ Quái đang cắn người chơi (`m.tgt === myId`)**: Ưu tiên phản đòn lập tức (-500 điểm).
-     * **👾 Quái gần nhất**: Tính theo khoảng cách thực tế (dist).
-   - Hễ có bất kỳ quái sống nào trong tầm quan sát, bot CHẮC CHẮN khóa và tấn công, không bao giờ rơi vào trạng thái `target: null`.
+### 1. 🎯 Khắc Phục Triệt Để Hiện Tượng "Quái Over Tầm":
+- **Xóa bỏ hoàn toàn "Dead Zone" (Vùng Chết)**: Trong các phiên bản trước, ngưỡng tiếp cận `approachTrigger` lớn hơn tầm với đòn đánh tối đa (`maxReach`), khiến nhân vật rơi vào trạng thái `STAND` khi đứng cách quái 305-313px — không thể tiếp cận và cũng không thể xuất chiêu!
+- **Tích hợp bán kính quái `targetRadius` vào toàn bộ công thức di chuyển**:
+  * **Đánh xa (Ranged)**: `approachTrigger = Math.round(actualMaxReach * 0.94)` (luôn nhỏ hơn `actualMaxReach`). Khi dừng chân (`STAND`), nhân vật LUÔN LUÔN nằm trọn vẹn trong tầm xuất chiêu!
+  * **Đánh gần (Melee)**: `approachTrigger = actualMaxReach - 8`, áp sát chém liên hoàn `75-85px`, cắm chốt gây sát thương tối đa.
+- **Giới hạn khoảng cách bám mục tiêu (Target Leash)**: Không bao giờ đuổi theo quái ra quá `380px` (đối với quái thường) hoặc `550px` (đối với Boss), tránh chạy rông khắp bản đồ.
 
-3. **⚡ Cơ Chế Tấn Công Tức Thời CoViet (`targetWithin` Fallback)**:
-   - Không còn phụ thuộc vào trạng thái điều hướng di chuyển. Nếu trong tầm đánh xuất hiện quái, nhân vật lập tức xả chiêu và đánh thường liên hoàn, tuyệt đối không bị lệnh `return` đóng băng.
+---
 
-4. **🏹 Kế Thừa Toàn Bộ Hệ Thống Đỉnh Cao v15.0 - v15.7**:
-   - Thả diều Hysteresis Latch & Conga-Kite 16 tia né vật cản tĩnh (cây, đá, tường).
-   - Né chiêu đỏ Boss Non-Blocking (vừa chạy né vừa xả chiêu tầm xa).
-   - Đếm chuẩn xác từng bình máu trong túi đồ, nạp đủ 100 bình liên tục.
-   - Nhận diện chuẩn môn phái và nút bấm 1 chạm đổi vai trò Gần / Xa trên Mini HUD.
+### 2. 👻 Quét Sạch 100% Quái 0 Máu Và 1 Máu:
+- **Bộ lọc nghiêm ngặt**: Loại bỏ hoàn toàn `m.hp <= 1 || m.dead || (m.st & 1)` ở mọi khâu tìm kiếm và chọn mục tiêu.
+- **Giải phóng mục tiêu 0 độ trễ (Zero-Latency Target Release)**: Ngay khi quái nhận sự kiện `die` hoặc snapshot báo máu $le 1$, bot lập tức gán `currentTargetId = null`, xóa `lockId = 0` và truyền gói tin `{ t: 'tg', id: 0 }` lên server.
+- **Dọn dẹp quái biến mất khỏi Snapshot**: Quét và dọn sạch các thực thể không còn nằm trong danh sách `s.n` của server.
+
+---
+
+### 3. 👑 Cơ Chế Chuyên Trị Boss & Thả Diều Đỉnh Cao (Boss Anti-Wipe Engine):
+- **Tính toán Hitbox khổng lồ của Boss (`r = 66+` như Nghê Chúa)**: Boss sở hữu sải tay chém cận chiến 130px và chiêu nhảy đè / quét đuôi 160-180px.
+- **Giữ cự ly vàng tuyệt đối cho Đánh Xa**:
+  * Duy trì cự ly `242px - 325px` so với tâm Boss (khoảng cách mép $> 158px$, Boss hoàn toàn không với tới).
+  * Nếu Boss áp sát $< 242px$: Tự động lùi thả diều (`RETREAT`) mở rộng khoảng cách về `298px`.
+- **Dọn sạch đệ tử của Boss (Minion Purge)**: Khi Boss triệu hồi từ 2 đệ tử trở lên bu sát trong $200px$, bot tự động chuyển mục tiêu dọn sạch đệ tử trước để giải tỏa sát thương, chống bị quây chết.
+- **Né chiêu đỏ thời gian thực (Non-Blocking Hazard Dodge)**: Tự động phát hiện vòng tròn, quạt lửa, tia sấm và lách sang điểm an toàn không bị vật cản.
+
+---
+
+### 4. 📦 Tải Về & Cài Đặt:
+- **Android APK**: `AncientRealm_Auto_v15_9.apk`
+- **Tampermonkey Userscript**: `AncientRealm_Master_Bot_v15_9.user.js`
+- **Chrome Extension**: `AncientRealm_Bot_Plugin_v15_9.zip`

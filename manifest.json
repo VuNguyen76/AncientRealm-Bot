@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Ancient Realm - Master Bot v15.8 (Kiến Trúc CoViet: Diệt Freeze & Target Scoring)",
-  "version": "15.8.0",
-  "description": "Áp dụng kiến trúc CoViet: Xóa bỏ deadMobIds triệt tiêu freeze quái hồi sinh, CoViet Target Scoring (Boss -> Mob cắn -> Khoảng cách), Immediate Combat Fallback không bao giờ đứng chôn chân.",
+  "name": "Ancient Realm - Master Bot v15.9 (Trị Over Tầm, Quái 0 Máu & Diệt Boss)",
+  "version": "15.9.0",
+  "description": "Khắc phục triệt để lỗi quái over tầm, quét sạch quái 0 máu / 1 máu, cơ chế chuyên trị Boss với kiting giữ cự ly vàng ngoài tầm 130px và dọn dẹp đệ tử.",
   "author": "Antigravity",
   "icons": {
     "48": "icon48.png",
