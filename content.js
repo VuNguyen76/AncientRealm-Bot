@@ -1,16 +1,20 @@
-// AncientRealm Online - Master Bot v15.7.0 (Khôi Phục Hysteresis Latch v15.0, Kiting Đa Hướng Né Cản, Non-Blocking Hazard Dodge & Tuần Tra Bãi Quái)
-// ĐÁP ỨNG CHÍNH XÁC 100% YÊU CẦU CỦA SẾP:
-// 1. KHÔI PHỤC HOÀN TOÀN HỆ THỐNG DI CHUYỂN & THẢ DIỀU V15.0 (HYSTERESIS LATCH + CONGA-KITE VECTOR):
-//    - Ranged (Âm Dương, Linh Mộc, Sơn Thần): tiếp cận đến ~82% tầm đánh (approachStop), trụ chân xả chiêu (STAND).
-//      Khi quái/boss áp sát < 68% tầm (retreatTrigger), lập tức thả diều lùi ngược (RETREAT) với Conga-Kite 16 tia né vật cản!
-//    - Melee (Thiên Vương, Long Tuyền): áp sát chặt chẽ 60-70px chém liên hoàn, chỉ lùi né dẫm chân nếu bị kẹp cứng.
-// 2. KHẮC PHỤC TRIỆT ĐỂ NÉ CHIÊU BOSS (HAZARD DODGING NON-BLOCKING & DỌN DẸP GHOST HAZARD):
-//    - Khi né vòng đỏ/vệt chiêu nguy hiểm, bot vừa di chuyển sang điểm an toàn vừa tiếp tục xả kỹ năng tầm xa (không bị đóng băng return).
-//    - Tự động xóa sạch activeHazards khi Boss chết hoặc khi chuyển map.
-// 3. TỰ ĐỘNG TUẦN TRA BÃI QUÁI (SPAWN PATROL):
-//    - Khi trên màn hình hết sạch quái, tự động di chuyển đến bãi spawn gần nhất để tìm quái thay vì đứng chôn chân.
-// 4. DUY TRÌ TOÀN BỘ CẢI TIẾN TRƯỚC ĐÓ:
-//    - Triệt tiêu hoàn toàn quái 0 máu / 1 máu (isMobValidAndAlive), nạp đủ 100 bình máu (đếm chuẩn túi đồ), nút đổi Role 1 chạm trên HUD.
+// AncientRealm Online - Master Bot v15.8.0 (Kiến Trúc CoViet: Triệt Tiêu Freeze Đứng Im, Target Scoring Chuẩn & Immediate Combat Fallback)
+// KẾ THỪA & NÂNG CẤP TOÀN DIỆN TỪ KIẾN TRÚC COVIET (D:\coviet-4\coviet):
+// 1. TRIỆT TIÊU TẬN GỐC HIỆN TƯỢNG ĐỨNG IM CHÔN CHÂN (FREEZE / DEAD MOB POISONING):
+//    - Xóa bỏ vĩnh viễn bộ nhớ đệm độc hại deadMobIds. Chuẩn hóa cờ sống chết theo CoViet sync.js: !(m.st & 1) && m.hp > 0.
+//    - Khi quái hồi sinh (respawn) cùng ID cũ, cờ mb.dead được tự động khôi phục về false ngay lập tức trên snapshot.
+// 2. BỘ ĐIỀU PHỐI MỤC TIÊU COVIET TARGET SCORING (HUNT.JS):
+//    - Ưu tiên số 1: Boss / Elite (-1000 điểm)
+//    - Ưu tiên số 2: Quái đang cắn người chơi m.tgt === myId (-500 điểm)
+//    - Ưu tiên số 3: Quái gần nhất theo khoảng cách thực tế (dist)
+//    - Đảm bảo 100% hễ có quái sống trong khu vực là PHẢI khóa và tấn công, không bao giờ rơi vào target: null!
+// 3. CƠ CHẾ TẤN CÔNG DỰ PHÒNG TỨC THÌ (COVIET ATTACK-RANGE FALLBACK):
+//    - Triệt tiêu bẫy return đóng băng khi tới bãi spawn.
+//    - Nếu trong tầm đánh xuất hiện quái, lập tức xả chiêu và đánh thường ngay (targetWithin standard), không phụ thuộc vào trạng thái di chuyển.
+// 4. DUY TRÌ BỘ MÁY CHIẾN ĐẤU ĐỈNH CAO:
+//    - Hysteresis Latch & Conga-Kite 16 tia né vật cản v15.0.
+//    - Nạp đủ 100 bình máu (đếm chuẩn túi đồ, không dừng ở 20).
+//    - Nhận diện chuẩn môn phái và nút bấm 1 chạm đổi vai trò Gần / Xa trên Mini HUD.
 //    - Khi d > reach: Tiến thẳng về phía quái để vào cự ly ra đòn.
 //    - Vector Đẩy Lùi Vật Thể Tĩnh (Static Obstacle Repulsion):
 //      Quét toàn bộ 276 vật cản tĩnh (world.cols - cây, đá, tường) trong bán kính 90px.
@@ -186,15 +190,16 @@
   // Chuẩn hóa môn phái:
   // - Đánh Gần (Melee): Thiên Vương Phủ (range 95), Long Tuyền Môn (range 85)
   let capturedSelf = null;
-  const deadMobIds = new Set();
 
-  // BỘ LỌC TRIỆT TIÊU QUÁI 0 MÁU VÀ 1 MÁU (CHỐNG KẸT QUÁI BÓNG MA/SẮP CHẾT)
+  // BỘ LỌC CHUẨN COVIET: KIỂM TRA SỐNG CHẾT THEO CỜ GÓI MẠNG (ST.DEAD & HP)
+  // Tuyệt đối không lưu cache deadMobIds tĩnh vì máy chủ hồi sinh quái cùng ID!
   function isMobValidAndAlive(m) {
     if (!m) return false;
-    if (deadMobIds.has(m.id)) return false;
-    if (m.dead) return false;
-    if ((m.st & 1) === 1) return false; // Cờ chết ST.DEAD
-    if (m.hp <= 1) return false;        // Quái 0 máu và 1 máu (đang trong hoạt ảnh chết)
+    // Cờ ST.DEAD từ server: bit 0 của st (st & 1 === 1)
+    if (typeof m.st === 'number' && (m.st & 1) === 1) return false;
+    if (m.dead === true && typeof m.st === 'number' && (m.st & 1) === 1) return false;
+    // Quái 0 máu hoặc âm máu (chuẩn CoViet)
+    if (typeof m.hp === 'number' && m.hp <= 0) return false;
     return true;
   }
 
@@ -619,8 +624,6 @@
             } else if (ev.k === 'die') {
               // BẮT SỰ KIỆN QUÁI CHẾT TỪ SERVER: GIẢI PHÓNG MỤC TIÊU NGAY LẬP TỨC
               const deadId = ev.t;
-              deadMobIds.add(deadId);
-              if (deadMobIds.size > 500) deadMobIds.clear();
               const mb = window.GAME?.mobs?.get(deadId);
               if (mb) {
                 mb.dead = true;
@@ -658,7 +661,6 @@
           activeHazards.length = 0;
         } else if (m.type === 'map') {
           activeHazards.length = 0;
-          deadMobIds.clear();
         } else if (m.type === 'got') {
           devState.totalItemsPicked++;
           const lootEl = document.getElementById('sm-s-loot');
@@ -673,24 +675,26 @@
   window.GAME.net.h.onSnapshot = function(s) {
     if (s) {
       if (s.d) capturedDrops = s.d;
-      // QUÉT SNAPSHOT MẠNG: ĐÁNH DẤU CHẾT NGAY TẤT CẢ QUÁI 0 MÁU, 1 MÁU HOẶC CỜ ST.DEAD
+      // QUÉT SNAPSHOT MẠNG CHUẨN COVIET: ĐỒNG BỘ TRẠNG THÁI SỐNG / CHẾT / HỒI SINH
       if (Array.isArray(s.n)) {
         for (const r of s.n) {
           const id = r[0], hp = r[6], st = r[8];
-          if (hp <= 1 || (st & 1)) {
-            deadMobIds.add(id);
-            const mb = window.GAME?.mobs?.get(id);
-            if (mb) {
+          const mb = window.GAME?.mobs?.get(id);
+          if (mb) {
+            if (hp <= 0 || (st & 1)) {
               mb.dead = true;
               mb.hp = 0;
               mb.st |= 1;
-            }
-            if (currentTargetId === id) {
-              currentTargetId = null;
-              if (window.GAME) {
-                window.GAME.lockId = 0;
-                window.GAME.targetId = 0;
+              if (currentTargetId === id) {
+                currentTargetId = null;
+                if (window.GAME) {
+                  window.GAME.lockId = 0;
+                  window.GAME.targetId = 0;
+                }
               }
+            } else {
+              // Quái còn sống hoặc vừa hồi sinh (respawn): Khôi phục cờ dead về false ngay lập tức!
+              mb.dead = false;
             }
           }
         }
@@ -941,8 +945,8 @@
       };
     }
 
-    // 2. MỤC TIÊU CÀY DO NGƯỜI CHƠI CHỌN TRÊN GIAO DIỆN (TÁCH BIỆT HOÀN TOÀN)
-    const farmTarget = cfg.farmMob || cfg.targetMob;
+    // 2. MỤC TIÊU CÀY DO NGƯỜI CHƠI CHỌN TRÊN GIAO DIỆN
+    const farmTarget = cfg.targetMob || 'all';
     if (farmTarget && farmTarget !== 'all') {
       return {
         type: 'farm',
@@ -1166,13 +1170,23 @@
       };
     }
 
-    // b. Nếu chưa có mục tiêu: Ưu tiên Boss nếu có trên map, nếu không lấy quái gần nhất
+    // b. Hệ thống chấm điểm CoViet Target Scoring (Boss > Quái đang cắn mình > Quái gần nhất)
     const activeBoss = allMobs.find(m => {
       const def = getMobDef(m);
       return !!(def?.boss || def?.elite || ['chantinh','daibang','moctinh','xuongho'].includes(m.kind));
     });
 
-    const chosen = activeBoss || closestMob;
+    let chosen = null;
+    if (activeBoss) {
+      chosen = activeBoss;
+    } else if (allMobs.length > 0) {
+      allMobs.sort((a, b) => {
+        const scoreA = (a.tgt === myId ? -500 : 0) + Math.hypot(a.x - me.x, a.y - me.y);
+        const scoreB = (b.tgt === myId ? -500 : 0) + Math.hypot(b.x - me.x, b.y - me.y);
+        return scoreA - scoreB;
+      });
+      chosen = allMobs[0];
+    }
     if (chosen) {
       currentTargetId = chosen.id;
       if (window.GAME) {
@@ -2442,7 +2456,7 @@
                   cursor: grab; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(0,230,118,0.3);">
         <div style="display: flex; align-items: center; gap: 7px; font-weight: bold; font-size: 12px; color: #fff;">
           <span style="font-size: 14px;">🤖</span>
-          <span style="background: linear-gradient(90deg, #00e676, #00b0ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 800; letter-spacing: 0.5px;">CỔ GIỚI BOT v15.7</span>
+          <span style="background: linear-gradient(90deg, #00e676, #00b0ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 800; letter-spacing: 0.5px;">CỔ GIỚI BOT v15.8</span>
           <span style="background: rgba(0,230,118,0.2); border: 1px solid #00e676; color: #00e676; font-size: 9px; padding: 1px 5px; border-radius: 8px; font-weight: 700;">60 FPS</span>
         </div>
         <div style="display: flex; gap: 6px; align-items: center;">
@@ -2685,7 +2699,7 @@
       
       <!-- Top Telemetry Row -->
       <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 4px;">
-        <span id="sm-mini-status" style="font-weight: bold; color: #00e676; font-size: 11px;">🟢 v15.7.0</span>
+        <span id="sm-mini-status" style="font-weight: bold; color: #00e676; font-size: 11px;">🟢 v15.8.0</span>
         <span style="color: #ff5252;">❤️ <b id="sm-mini-hp">100%</b></span>
         <span style="color: #69f0ae;">🩸 <b id="sm-mini-pots">0</b></span>
         <span style="color: #ffd740;">💰 <b id="sm-mini-gold">0</b></span>
@@ -3784,6 +3798,19 @@
     }
 
     if (state.navigatingSpawn && !state.target) {
+      // CoViet targetWithin check: nếu có bất kỳ quái sống nào trong tầm, ưu tiên xả chiêu & đánh ngay!
+      const roleInfo = getCharacterRoleInfo();
+      const allActiveMobs = window.GAME?.mobs ? Array.from(window.GAME.mobs.values()).filter(m => isMobValidAndAlive(m)) : [];
+      const mobInRange = allActiveMobs.find(m => Math.hypot(m.x - me.x, m.y - me.y) <= roleInfo.baseRange + 50);
+      if (mobInRange) {
+        currentTargetId = mobInRange.id;
+        if (window.GAME) {
+          window.GAME.lockId = mobInRange.id;
+          window.GAME.targetId = mobInRange.id;
+        }
+        executeOracleAttack(mobInRange, now, Math.hypot(mobInRange.x - me.x, mobInRange.y - me.y), 0, mobInRange, 1, false, false);
+      }
+
       movementState = 'APPROACH';
       const dist = Math.hypot(state.navigatingSpawn.x - me.x, state.navigatingSpawn.y - me.y);
       if (dist > 80) {
@@ -3802,11 +3829,24 @@
 
     const targetMob = state.target;
     if (!targetMob || !isMobValidAndAlive(targetMob)) {
-      currentTargetId = null;
-      movementState = 'STAND';
-      stopMoving();
-      if (statusTxt) statusTxt.textContent = "Đang quét tìm quái...";
-      if (targetTxt) targetTxt.textContent = "None";
+      // CoViet targetWithin fallback: nếu mất target nhưng có quái sống trong tầm, không bao giờ đứng chôn chân
+      const roleInfo = getCharacterRoleInfo();
+      const allActiveMobs = window.GAME?.mobs ? Array.from(window.GAME.mobs.values()).filter(m => isMobValidAndAlive(m)) : [];
+      const mobInRange = allActiveMobs.find(m => Math.hypot(m.x - me.x, m.y - me.y) <= roleInfo.baseRange + 50);
+      if (mobInRange) {
+        currentTargetId = mobInRange.id;
+        if (window.GAME) {
+          window.GAME.lockId = mobInRange.id;
+          window.GAME.targetId = mobInRange.id;
+        }
+        executeOracleAttack(mobInRange, now, Math.hypot(mobInRange.x - me.x, mobInRange.y - me.y), 0, mobInRange, 1, false, false);
+      } else {
+        currentTargetId = null;
+        movementState = 'STAND';
+        stopMoving();
+        if (statusTxt) statusTxt.textContent = "Đang quét tìm quái...";
+        if (targetTxt) targetTxt.textContent = "None";
+      }
       return;
     }
 
@@ -3959,7 +3999,7 @@
     // Xả kỹ năng: Khi bị vây khẩn cấp, kích hoạt Choáng diện rộng ngay lập tức!
     executeOracleAttack(targetMob, now, distToTarget, state.dMin, state.closestMob, state.pursuerCount, isPinnedAgainstWall, state.isPvP);
 
-    if (miniStatusEl) miniStatusEl.textContent = cfg.enabled ? '🟢 Bot v15.7.0' : '🔴 Tạm dừng';
+    if (miniStatusEl) miniStatusEl.textContent = cfg.enabled ? '🟢 Bot v15.8.0' : '🔴 Tạm dừng';
     if (miniAtkEl) miniAtkEl.textContent = devState.totalAttacks;
     if (miniBreakoutEl) miniBreakoutEl.textContent = devState.breakoutsTriggered;
     if (miniStateEl && statusTxt) miniStateEl.textContent = statusTxt.textContent;
@@ -3967,7 +4007,7 @@
 
 
   window._ancientMasterBot = {
-    version: '15.7.0',
+    version: '15.8.0',
     cfg,
     devState,
     skillTimers,
@@ -3992,10 +4032,10 @@
       if (origUiChatLine && window.GAME?.ui) window.GAME.ui.chatLine = origUiChatLine;
       if (origUiToggleChat && window.GAME?.ui) window.GAME.ui.toggleChat = origUiToggleChat;
       delete window._ancientMasterBot;
-      console.log("%c[BOT v15.7.0] Đã gỡ bỏ toàn bộ giao diện và tiến trình.", "color: #ff9800; font-weight: bold;");
+      console.log("%c[BOT v15.8.0] Đã gỡ bỏ toàn bộ giao diện và tiến trình.", "color: #ff9800; font-weight: bold;");
     }
   };
 
-    console.log("%c[BOT v15.7.0] KHỞI ĐỘNG THÀNH CÔNG: KHÔI PHỤC HYSTERESIS LATCH v15.0, KITING ĐA HƯỚNG & TUẦN TRA BÃI QUÁI!", "color: #00e676; font-size: 14px; font-weight: bold;");
+    console.log("%c[BOT v15.8.0] KHỞI ĐỘNG THÀNH CÔNG: KIẾN TRÚC COVIET, TRIỆT TIÊU FREEZE ĐỨNG IM, TARGET SCORING & ATTACK FALLBACK!", "color: #00e676; font-size: 14px; font-weight: bold;");
   }
 })();

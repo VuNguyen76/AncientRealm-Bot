@@ -1,24 +1,22 @@
-# Ancient Realm - Master Bot v15.7 (Khôi Phục Bộ Máy Chiến Đấu & Thả Diều v15.0, Né Chiêu Boss Không Chặn Đòn & Tuần Tra Bãi Quái)
+# Ancient Realm - Master Bot v15.8 (Kiến Trúc CoViet: Triệt Tiêu Freeze Đứng Im, Target Scoring Chuẩn & Immediate Combat Fallback)
 
-## 🌟 Tính Năng Mới Trong Bản v15.7.0
-1. **🏹 Khôi Phục Hoàn Toàn Hysteresis Latch & Thả Diều Kiting v15.0**:
-   - Sửa tận gốc cảm giác thụ động, đứng im chịu trận khi quái/boss áp sát của các bản v15.1 - v15.6.
-   - **Đánh Xa (Âm Dương, Linh Mộc, Sơn Thần)**:
-     * Tiến vào tầm chiêu `approachStop` (~82% tầm), trụ chân xả full combo chiêu thức và đòn đánh.
-     * Khi quái/boss áp sát `< 68%` tầm (`retreatTrigger`), tự động kích hoạt trạng thái `RETREAT` và dùng thuật toán **Conga-Kite Vector 16 tia** để lùi mượt mà, né gốc cây/đá/vách núi, duy trì cự ly vàng `retreatSafe`.
-     * Vừa di chuyển thả diều vừa xả kỹ năng liên tục (Stutter-step DPS)!
-   - **Đánh Gần (Thiên Vương, Long Tuyền)**:
-     * Áp sát chặt chẽ `60-70px` chém liên hoàn tốc lực, trụ chân tối đa, chỉ lùi phá vây khi bị kẹp giữa nhiều quái hoặc chân boss.
+## 🌟 Tính Năng Đột Phá Trong Bản v15.8.0 (Học Hỏi Kiến Trúc CoViet)
+1. **🛡️ Triệt Tiêu Hoàn Toàn Lỗi Freeze Đứng Im Chôn Chân (Dead Mob Poisoning Bug)**:
+   - Nghiên cứu từ `sync.js` của dự án CoViet: Ancient Realm tái sử dụng ID quái cũ khi quái hồi sinh (respawn). Bộ đệm `deadMobIds` tĩnh trước đây đã vĩnh viễn khóa chết quái hồi sinh, khiến bot tưởng rằng không còn quái nào trên bản đồ và đứng im với thông báo *"Chờ xuất hiện..."*.
+   - Bản v15.8 xóa bỏ hoàn toàn `deadMobIds`, đồng bộ cờ sống chết theo đúng chuẩn gói tin mạng: `!(m.st & 1) && m.hp > 0`. Khi quái vừa hồi sinh, cờ `mb.dead` được khôi phục về `false` ngay lập tức trên snapshot.
 
-2. **⚡ Khắc Phục Triệt Để Cơ Chế Né Chiêu Boss (Non-Blocking Hazard Dodge)**:
-   - Loại bỏ hoàn toàn lệnh đóng băng `return;` khi đang né chiêu đỏ boss.
-   - Nhân vật vừa di chuyển trượt ra vùng an toàn (`safePt`), vừa tiếp tục khóa mục tiêu và bắn chiêu tầm xa vào Boss mà không bị khựng lại dù chỉ 1 frame.
-   - Tự động xóa sạch các bẫy `activeHazards` khi Boss/Elite bị hạ gục hoặc khi đổi bản đồ.
+2. **🎯 Bộ Điều Phối Mục Tiêu CoViet Target Scoring (`hunt.js` Standard)**:
+   - Xếp hạng ưu tiên mục tiêu theo thang điểm chính xác:
+     * **👑 Boss / Elite**: Ưu tiên tuyệt đối (-1000 điểm).
+     * **⚔️ Quái đang cắn người chơi (`m.tgt === myId`)**: Ưu tiên phản đòn lập tức (-500 điểm).
+     * **👾 Quái gần nhất**: Tính theo khoảng cách thực tế (dist).
+   - Hễ có bất kỳ quái sống nào trong tầm quan sát, bot CHẮC CHẮN khóa và tấn công, không bao giờ rơi vào trạng thái `target: null`.
 
-3. **🧭 Tự Động Tuần Tra Bãi Quái (Spawn Patrol - Không Bao Giờ Đứng Chôn Chân)**:
-   - Khi khu vực xung quanh đã dọn sạch quái (`target: null`), bot tự động tính toán và di chuyển đến bãi spawn quái gần nhất trên bản đồ thay vì đứng im chờ đợi.
+3. **⚡ Cơ Chế Tấn Công Tức Thời CoViet (`targetWithin` Fallback)**:
+   - Không còn phụ thuộc vào trạng thái điều hướng di chuyển. Nếu trong tầm đánh xuất hiện quái, nhân vật lập tức xả chiêu và đánh thường liên hoàn, tuyệt đối không bị lệnh `return` đóng băng.
 
-4. **🧪 Kế Thừa Toàn Bộ Các Tính Năng Đỉnh Cao Trước Đó**:
-   - **Đếm chính xác từng bình máu trong túi**: nạp đủ 100 bình liên tục mà không bị khựng ở 20 bình.
-   - **Triệt tiêu hoàn toàn quái 0 máu / 1 máu**: không bao giờ đánh quái bóng ma.
-   - **Nhận diện chuẩn môn phái**: bắt gói tin server và cung cấp nút bấm 1 chạm đổi vai trò Gần / Xa trực tiếp trên Mini HUD.
+4. **🏹 Kế Thừa Toàn Bộ Hệ Thống Đỉnh Cao v15.0 - v15.7**:
+   - Thả diều Hysteresis Latch & Conga-Kite 16 tia né vật cản tĩnh (cây, đá, tường).
+   - Né chiêu đỏ Boss Non-Blocking (vừa chạy né vừa xả chiêu tầm xa).
+   - Đếm chuẩn xác từng bình máu trong túi đồ, nạp đủ 100 bình liên tục.
+   - Nhận diện chuẩn môn phái và nút bấm 1 chạm đổi vai trò Gần / Xa trên Mini HUD.

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Ancient Realm - Master Bot v15.7 (Khôi Phục Hysteresis Kiting & Combat v15.0)",
-  "version": "15.7.0",
-  "description": "Khôi phục toàn bộ chiến đấu linh hoạt v15.0: thả diều Hysteresis Latch, né cản 16 tia Conga-Kite, né chiêu Boss không chặn đòn đánh, tuần tra bãi quái.",
+  "name": "Ancient Realm - Master Bot v15.8 (Kiến Trúc CoViet: Diệt Freeze & Target Scoring)",
+  "version": "15.8.0",
+  "description": "Áp dụng kiến trúc CoViet: Xóa bỏ deadMobIds triệt tiêu freeze quái hồi sinh, CoViet Target Scoring (Boss -> Mob cắn -> Khoảng cách), Immediate Combat Fallback không bao giờ đứng chôn chân.",
   "author": "Antigravity",
   "icons": {
     "48": "icon48.png",
