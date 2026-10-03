@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Ancient Realm - Master Bot v15.9 (Trị Over Tầm, Quái 0 Máu & Diệt Boss)",
-  "version": "15.9.0",
-  "description": "Khắc phục triệt để lỗi quái over tầm, quét sạch quái 0 máu / 1 máu, cơ chế chuyên trị Boss với kiting giữ cự ly vàng ngoài tầm 130px và dọn dẹp đệ tử.",
+  "name": "Ancient Realm - Master Bot v16.0 (Vua Né Chiêu Boss & Triệt Tiêu Góc Chết)",
+  "version": "16.0.0",
+  "description": "Vua né chiêu Boss, triệt tiêu hoàn toàn góc chết, lực đẩy vật cản tĩnh chính xác, chống kẹt địa hình và khắc phục quái over tầm & 0 máu.",
   "author": "Antigravity",
   "icons": {
     "48": "icon48.png",

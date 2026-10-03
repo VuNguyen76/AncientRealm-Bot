@@ -1,4 +1,4 @@
-// AncientRealm Online - Master Bot v15.9.0 (Khắc Phục Triệt Để Quái Over Tầm, Quét Sạch Quái 0 Máu, Chuyên Trị Boss & Kiting Đỉnh Cao)
+// AncientRealm Online - Master Bot v16.0.0 (Vua Né Chiêu Boss & Triệt Tiêu Góc Chết, Khắc Phục Triệt Để Quái Over Tầm & 0 Máu)
 // KẾ THỪA & NÂNG CẤP TOÀN DIỆN TỪ KIẾN TRÚC COVIET (D:\coviet-4\coviet):
 // 1. TRIỆT TIÊU TẬN GỐC HIỆN TƯỢNG ĐỨNG IM CHÔN CHÂN (FREEZE / DEAD MOB POISONING):
 //    - Xóa bỏ vĩnh viễn bộ nhớ đệm độc hại deadMobIds. Chuẩn hóa cờ sống chết theo CoViet sync.js: !(m.st & 1) && m.hp > 0.
@@ -208,15 +208,91 @@
     return !!(def?.boss || def?.elite || ['chantinh', 'daibang', 'moctinh', 'xuongho', 'nghechua'].includes(m.kind));
   }
 
-  function isPointColliding(px, py, pad = 18) {
-    const cols = window.GAME?.world?.cols || [];
-    for (const c of cols) {
-      if (Math.hypot(px - c[0], py - c[1]) < c[2] + pad) return true;
+  function getColliderDistance(c, px, py) {
+    if (!c) return Infinity;
+    if (c.t === 'c') {
+      return Math.hypot(px - c.x, py - c.y) - (c.r || 20);
     }
-    const zoneW = window.GAME?.world?.w || 3600;
-    const zoneH = window.GAME?.world?.h || 2600;
-    if (px < 40 || px > zoneW - 40 || py < 40 || py > zoneH - 40) return true;
+    if (c.t === 'b') {
+      const cx = Math.max(c.x0, Math.min(px, c.x1));
+      const cy = Math.max(c.y0, Math.min(py, c.y1));
+      return Math.hypot(px - cx, py - cy);
+    }
+    if (c.t === 'e') {
+      const ex = (px - c.x) / (c.rx || 100);
+      const ey = (py - c.y) / (c.ry || 50);
+      return (Math.hypot(ex, ey) - 1.0) * Math.min(c.rx || 100, c.ry || 50);
+    }
+    if (Array.isArray(c)) {
+      return Math.hypot(px - c[0], py - c[1]) - (c[2] || 20);
+    }
+    return Infinity;
+  }
+
+  function getColliderSurfaceVector(c, px, py) {
+    if (!c) return { dx: 0, dy: 0, distSurface: Infinity };
+    let cx = px, cy = py, r = 0;
+    if (c.t === 'c') {
+      cx = c.x; cy = c.y; r = c.r || 20;
+    } else if (c.t === 'b') {
+      cx = Math.max(c.x0, Math.min(px, c.x1));
+      cy = Math.max(c.y0, Math.min(py, c.y1));
+      r = 0;
+    } else if (c.t === 'e') {
+      cx = c.x; cy = c.y; r = Math.min(c.rx || 100, c.ry || 50);
+    } else if (Array.isArray(c)) {
+      cx = c[0]; cy = c[1]; r = c[2] || 20;
+    }
+    const dx = px - cx, dy = py - cy;
+    const d = Math.hypot(dx, dy) || 1;
+    const distSurface = d - r;
+    return { dx: dx / d, dy: dy / d, distSurface };
+  }
+
+  function isPointColliding(px, py, pad = 18) {
+    const world = window.GAME?.world;
+    if (!world) return false;
+    const mapW = world.w || 2000, mapH = world.h || 2000;
+    if (px < pad + 20 || px > mapW - pad - 20 || py < pad + 50 || py > mapH - pad - 20) {
+      return true;
+    }
+    const cols = world.cols || [];
+    const near = world.nearCols ? world.nearCols(px, py, pad + 20) : null;
+    const indices = near ? Array.from(near) : null;
+    if (indices) {
+      for (const i of indices) {
+        if (getColliderDistance(cols[i], px, py) < pad) return true;
+      }
+    } else {
+      for (let i = 0; i < cols.length; i++) {
+        if (getColliderDistance(cols[i], px, py) < pad) return true;
+      }
+    }
     return false;
+  }
+
+  function isPathClear(x0, y0, x1, y1, r = 18) {
+    const d = Math.hypot(x1 - x0, y1 - y0);
+    const steps = Math.max(1, Math.ceil(d / 12));
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      const sx = x0 + (x1 - x0) * t;
+      const sy = y0 + (y1 - y0) * t;
+      if (isPointColliding(sx, sy, r)) return false;
+    }
+    return true;
+  }
+
+  function countBlockedDirections(x, y, dist = 65) {
+    let blockedCount = 0;
+    for (let a = 0; a < 360; a += 45) {
+      const rad = a * Math.PI / 180;
+      const dx = Math.cos(rad) * dist, dy = Math.sin(rad) * dist;
+      if (!isPathClear(x, y, x + dx, y + dy, 18)) {
+        blockedCount++;
+      }
+    }
+    return blockedCount;
   }
 
   // - Đánh Xa (Ranged): Linh Mộc Đường (range 260), Âm Dương Tông (range 280), Sơn Thần Giáo (range 320)
@@ -448,25 +524,53 @@
   }
 
   function findSafeDodgePoint(me, hazards) {
-    const RINGS = [55, 95, 145, 205, 285];
-    let best = null, minCost = Infinity;
+    const world = window.GAME?.world;
+    if (!world) return null;
+    const worldW = world.w || 2000, worldH = world.h || 2000;
+
+    // Vòng quét bán kính: từ gần đến xa, mở rộng đến 450px cho đại chiêu Boss
+    const RINGS = [65, 110, 160, 220, 290, 370, 450];
+    const candidates = [];
+    const currentTarget = currentTargetId ? window.GAME?.mobs?.get(currentTargetId) : null;
+
     for (const dist of RINGS) {
-      for (let angleDeg = 0; angleDeg < 360; angleDeg += 20) {
+      for (let angleDeg = 0; angleDeg < 360; angleDeg += 15) {
         const rad = angleDeg * Math.PI / 180;
         const cx = me.x + Math.cos(rad) * dist;
         const cy = me.y + Math.sin(rad) * dist;
-        // Bỏ qua nếu nằm trong vùng chiêu nguy hiểm
-        if (hazards.some(h => isPointInsideHazard(h, cx, cy, 40))) continue;
-        // Bỏ qua nếu điểm né đâm vào gốc cây / tảng đá / ngoài map
-        if (isPointColliding(cx, cy, 22)) continue;
-        const cost = dist;
-        if (cost < minCost) {
-          minCost = cost;
-          best = { x: cx, y: cy };
+
+        // 1. Phải nằm ngoài tất cả vùng chiêu nguy hiểm (cộng đệm an toàn 32px)
+        if (hazards.some(h => isPointInsideHazard(h, cx, cy, 32))) continue;
+
+        // 2. Không nằm sát rìa bản đồ (cách ít nhất 120px)
+        if (cx < 120 || cx > worldW - 120 || cy < 150 || cy > worldH - 120) continue;
+
+        // 3. Điểm đích không bị vật cản tĩnh chặn (đệm thông thoáng 24px)
+        if (isPointColliding(cx, cy, 24)) continue;
+
+        // 4. KIỂM TRA ĐƯỜNG ĐI TRỰC TIẾP (LINE OF SIGHT):
+        // Nếu giữa vị trí hiện tại và điểm né có gốc cây / tảng đá / tường chắn thì LOẠI BỎ!
+        if (!isPathClear(me.x, me.y, cx, cy, 18)) continue;
+
+        // 5. LOẠI BỎ TRIỆT ĐỂ GÓC CHẾT (DEAD CORNER ELIMINATION):
+        // Nếu xung quanh điểm né có từ 3 hướng trở lên bị chặn -> ĐÓ LÀ GÓC KẸT / HẺM CỤT, LOẠI BỎ NGAY!
+        const blockedDirs = countBlockedDirections(cx, cy, 70);
+        if (blockedDirs >= 3) continue;
+
+        // 6. Tính điểm: Ưu tiên khoảng cách ngắn, cực kỳ ưu tiên bãi đất trống (blockedDirs = 0),
+        // và duy trì khoảng cách tác chiến hợp lý với mục tiêu (học từ CoViet)
+        let cost = dist + (blockedDirs * 100);
+        if (currentTarget) {
+          const dt = Math.hypot(cx - currentTarget.x, cy - currentTarget.y);
+          cost += dt * 0.2;
         }
+        candidates.push({ x: cx, y: cy, cost });
       }
     }
-    return best;
+
+    if (candidates.length === 0) return null;
+    candidates.sort((a, b) => a.cost - b.cost);
+    return { x: candidates[0].x, y: candidates[0].y };
   }
 
   // Tự Động Hồi Sinh & Trở Lại Bãi Train (v15.0)
@@ -835,18 +939,25 @@
     const cols = window.GAME?.world?.cols || [];
     let obstacleNearCount = 0;
     for (const c of cols) {
-      const cx = c[0], cy = c[1], cr = c[2];
-      const dx = me.x - cx, dy = me.y - cy;
-      const distCenter = Math.hypot(dx, dy) || 1;
-      const distSurface = distCenter - cr - 16;
-      if (distSurface < 85) {
+      const info = getColliderSurfaceVector(c, me.x, me.y);
+      const distSurface = info.distSurface - 16;
+      if (distSurface < 95) {
         obstacleNearCount++;
         // Càng gần vật cản, lực đẩy ngược ra càng cực đại!
         const weight = 1 / Math.max(1, distSurface * distSurface);
-        repX += (dx / distCenter) * weight * 2500;
-        repY += (dy / distCenter) * weight * 2500;
+        repX += info.dx * weight * 3500;
+        repY += info.dy * weight * 3500;
       }
     }
+
+    // Lực đẩy từ 4 mép bản đồ (World Boundaries Repulsion)
+    const mapW = window.GAME?.world?.w || 2000;
+    const mapH = window.GAME?.world?.h || 2000;
+    const pad = 120;
+    if (me.x < pad) { repX += (1 / Math.max(1, me.x * me.x)) * 5000; obstacleNearCount++; }
+    if (me.x > mapW - pad) { repX -= (1 / Math.max(1, (mapW - me.x) * (mapW - me.x))) * 5000; obstacleNearCount++; }
+    if (me.y < pad + 30) { repY += (1 / Math.max(1, me.y * me.y)) * 5000; obstacleNearCount++; }
+    if (me.y > mapH - pad) { repY -= (1 / Math.max(1, (mapH - me.y) * (mapH - me.y))) * 5000; obstacleNearCount++; }
 
     const repLen = Math.hypot(repX, repY) || 1;
     let normRepX = repX / repLen;
@@ -869,7 +980,7 @@
     }
 
     // 4. QUÉT 16 TIA ĐA HƯỚNG TRỌN VẸN 360 ĐỘ:
-    // Đảm bảo dù hướng lùi chính bị vách đá cản, bot luôn tìm được khe hở thoát hiểm!
+    // Đảm bảo dù hướng lùi chính bị vách đá cản, bot luôn tìm được khe hở thoát hiểm ra bãi trống!
     const numRays = 16;
     let bestVx = normRepX, bestVy = normRepY, bestScore = -Infinity;
     const zoneW = window.GAME?.world?.w || 3600;
@@ -901,6 +1012,15 @@
       // Tránh mép bản đồ
       if (nextX < 120 || nextX > zoneW - 120 || nextY < 120 || nextY > zoneH - 120) {
         score -= 300;
+      }
+
+      // LOẠI TRỪ GÓC CHẾT (DEAD CORNER PENALTY):
+      // Nếu hướng này dẫn vào một hẻm cụt có từ 3 hướng bị chặn, phạt cực nặng!
+      const blockedAtNext = countBlockedDirections(nextX, nextY, 65);
+      if (blockedAtNext >= 3) {
+        score -= 600;
+      } else if (blockedAtNext === 0) {
+        score += 100; // Bãi đất trống cực thoáng
       }
 
       if (score > bestScore) {
@@ -2270,11 +2390,12 @@
     if (dangerH) {
       const safePt = findSafeDodgePoint(me, activeHazards);
       if (safePt) {
-        const steer = calculateDirectSteering(me, safePt.x, safePt.y);
-        setSteeringVector(steer.dx, steer.dy);
+        const dx = safePt.x - me.x, dy = safePt.y - me.y;
+        const d = Math.hypot(dx, dy) || 1;
+        setSteeringVector(dx / d, dy / d);
       } else {
-        const angle = Math.atan2(me.y - dangerH.y, me.x - dangerH.x);
-        setSteeringVector(Math.cos(angle), Math.sin(angle));
+        const kiteVec = computeCongaKiteVector(me, [], null, true);
+        setSteeringVector(kiteVec.vx, kiteVec.vy);
       }
       if (statusTxt) statusTxt.textContent = `⚠️ NÉ CHIÊU BOSS [${(dangerH.sh || 'hazard').toUpperCase()}] TRÊN ĐƯỜNG ĐI!`;
       return;
@@ -2786,7 +2907,7 @@
       
       <!-- Top Telemetry Row -->
       <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 4px;">
-        <span id="sm-mini-status" style="font-weight: bold; color: #00e676; font-size: 11px;">🟢 v15.9.0</span>
+        <span id="sm-mini-status" style="font-weight: bold; color: #00e676; font-size: 11px;">🟢 v16.0.0</span>
         <span style="color: #ff5252;">❤️ <b id="sm-mini-hp">100%</b></span>
         <span style="color: #69f0ae;">🩸 <b id="sm-mini-pots">0</b></span>
         <span style="color: #ffd740;">💰 <b id="sm-mini-gold">0</b></span>
@@ -3788,13 +3909,14 @@
       devState.swingDodged++;
       const safePt = findSafeDodgePoint(me, activeHazards);
       if (safePt) {
-        const steer = calculateDirectSteering(me, safePt.x, safePt.y);
-        setSteeringVector(steer.dx, steer.dy);
+        const dx = safePt.x - me.x, dy = safePt.y - me.y;
+        const d = Math.hypot(dx, dy) || 1;
+        setSteeringVector(dx / d, dy / d);
       } else {
-        const angle = Math.atan2(me.y - dangerousHazard.y, me.x - dangerousHazard.x);
-        setSteeringVector(Math.cos(angle), Math.sin(angle));
+        const kiteVec = computeCongaKiteVector(me, [], null, true);
+        setSteeringVector(kiteVec.vx, kiteVec.vy);
       }
-      if (statusTxt) statusTxt.textContent = `⚠️ NÉ CHIÊU BOSS [${(dangerousHazard.sh || 'hazard').toUpperCase()}]!`;
+      if (statusTxt) statusTxt.textContent = `⚠️ NÉ CHIÊU BOSS [${(dangerousHazard.sh || 'hazard').toUpperCase()}] RA BÃI TRỐNG!`;
       if (miniStateEl) {
         miniStateEl.textContent = `⚠️ Né ${dangerousHazard.sh || 'chiêu'}`;
         miniStateEl.style.color = '#ff5252';
@@ -3843,8 +3965,8 @@
     const latest = snaps?.[snaps.length - 1];
     const currentDrops = latest?.d || capturedDrops || [];
 
-    // 3. Nhặt đồ độc lập: CHỈ KHI QUÁI ĐÃ CHẾT VÀ AN TOÀN
-    if (cfg.autoLoot && (!state.target || state.dMin >= 200) && currentDrops.length > 0) {
+    // 3. Nhặt đồ độc lập: CHỈ KHI QUÁI ĐÃ CHẾT VÀ AN TOÀN (VÀ KHÔNG TRONG LÚC NÉ CHIÊU)
+    if (cfg.autoLoot && !isDodgingHazard && (!state.target || state.dMin >= 200) && currentDrops.length > 0) {
       const validDrops = currentDrops.map(d => ({
         id: d[0], item: d[1], x: d[2], y: d[3], r: d[4], mine: d[6],
         dist: Math.hypot(d[2] - me.x, d[3] - me.y)
@@ -3931,10 +4053,12 @@
         executeOracleAttack(mobInRange, now, Math.hypot(mobInRange.x - me.x, mobInRange.y - me.y), 0, mobInRange, 1, false, false);
       } else {
         currentTargetId = null;
-        movementState = 'STAND';
-        stopMoving();
-        if (statusTxt) statusTxt.textContent = "Đang quét tìm quái...";
-        if (targetTxt) targetTxt.textContent = "None";
+        if (!isDodgingHazard) {
+          movementState = 'STAND';
+          stopMoving();
+          if (statusTxt) statusTxt.textContent = "Đang quét tìm quái...";
+          if (targetTxt) targetTxt.textContent = "None";
+        }
       }
       return;
     }
@@ -4111,7 +4235,7 @@
     // Xả kỹ năng: Khi bị vây khẩn cấp, kích hoạt Choáng diện rộng ngay lập tức!
     executeOracleAttack(targetMob, now, distToTarget, state.dMin, state.closestMob, state.pursuerCount, isPinnedAgainstWall, state.isPvP);
 
-    if (miniStatusEl) miniStatusEl.textContent = cfg.enabled ? '🟢 Bot v15.9.0' : '🔴 Tạm dừng';
+    if (miniStatusEl) miniStatusEl.textContent = cfg.enabled ? '🟢 Bot v16.0.0' : '🔴 Tạm dừng';
     if (miniAtkEl) miniAtkEl.textContent = devState.totalAttacks;
     if (miniBreakoutEl) miniBreakoutEl.textContent = devState.breakoutsTriggered;
     if (miniStateEl && statusTxt) miniStateEl.textContent = statusTxt.textContent;
@@ -4119,7 +4243,7 @@
 
 
   window._ancientMasterBot = {
-    version: '15.9.0',
+    version: '16.0.0',
     cfg,
     devState,
     skillTimers,
@@ -4144,10 +4268,10 @@
       if (origUiChatLine && window.GAME?.ui) window.GAME.ui.chatLine = origUiChatLine;
       if (origUiToggleChat && window.GAME?.ui) window.GAME.ui.toggleChat = origUiToggleChat;
       delete window._ancientMasterBot;
-      console.log("%c[BOT v15.9.0] Đã gỡ bỏ toàn bộ giao diện và tiến trình.", "color: #ff9800; font-weight: bold;");
+      console.log("%c[BOT v16.0.0] Đã gỡ bỏ toàn bộ giao diện và tiến trình.", "color: #ff9800; font-weight: bold;");
     }
   };
 
-    console.log("%c[BOT v15.9.0] KHỞI ĐỘNG THÀNH CÔNG: KHẮC PHỤC TRIỆT ĐỂ OVER TẦM, QUÉT SẠCH QUÁI 0 MÁU, CHUYÊN TRỊ BOSS & KITING ĐỈNH CAO!", "color: #00e676; font-size: 14px; font-weight: bold;");
+    console.log("%c[BOT v16.0.0] KHỞI ĐỘNG THÀNH CÔNG: VUA NÉ CHIÊU BOSS & TRIỆT TIÊU GÓC CHẾT, CHỐNG KẸT ĐỊA HÌNH ĐỈNH CAO!", "color: #00e676; font-size: 14px; font-weight: bold;");
   }
 })();
