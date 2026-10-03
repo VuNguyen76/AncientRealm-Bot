@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Ancient Realm - Master Bot v13.9 (Global Dynamic Map & Auto-Shop)
 // @namespace    http://tampermonkey.net/
-// @version      13.9.0
-// @description  Hệ thống toàn cầu động: Tự nhận diện mọi Shop NPC trong 26 map, chống lặp cổng khi sang map mới làm nhiệm vụ, tự động thích ứng quái mới, hỗ trợ cả 5 môn phái.
+// @version      13.9.7
+// @description  Hệ thống toàn cầu động: Nạp 100 bình máu, chống mất focus quái khi chuyển khu vực, tối ưu hóa di chuyển né kẹt và xả chiêu chuẩn hitbox.
 // @author       Antigravity
 // @match        *://ancientrealm.online/*
 // @match        *://*.ancientrealm.online/*
@@ -112,7 +112,7 @@
     autoShopMaxHops: 3, // Giới hạn số cổng tối đa được phép đi (tránh đi lang thang)
     autoShopFreeSlotTrigger: 1, // Hành trang còn <= 1 ô trống -> Đi bán rác & nguyên liệu
     autoShopHpPotionTrigger: 2, // Còn <= 2 bình máu -> Đi nạp bình máu
-    autoShopMinPotionsToBuy: 20 // Số bình máu muốn nạp đủ
+    autoShopMinPotionsToBuy: 100 // Số bình máu muốn nạp đủ (100 bình)
   };
 
   const devState = {
@@ -142,6 +142,10 @@
   // Chống lặp cổng (Anti-Ping-Pong) & Chuyển map thông minh
   let lastZoneTransitionTime = 0;
   let lastArrivedPortalCoords = null;
+
+  // Khóa mục tiêu dính chặt (Target Stickiness) & Tránh spam gói tin tg
+  let currentTargetId = null;
+  let lastTargetIdSent = null;
 
   // Theo dõi kẹt địa hình
   let lastPosCheck = { x: 0, y: 0, t: 0 };
@@ -264,11 +268,31 @@
   }
 
   function stopMoving() {
-    for (const k of activeKeys) {
+    const allMoveKeys = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
+    for (const k of allMoveKeys) {
       const char = k.replace('Key', '').toLowerCase();
       window.dispatchEvent(new KeyboardEvent('keyup', { key: char, code: k, bubbles: true }));
     }
     activeKeys.clear();
+  }
+
+  // Tự động giải phóng phím khi cửa sổ mất focus (chống trôi nhân vật và mất lái)
+  window.addEventListener('blur', () => {
+    stopMoving();
+  });
+
+  function getUnstuckSteer(me) {
+    const rays = 8;
+    let bestAngle = 0, maxClear = 0;
+    for (let i = 0; i < rays; i++) {
+      const a = (i * 2 * Math.PI) / rays;
+      const p = testProbe(me, Math.cos(a), Math.sin(a), 65);
+      if (p.dist > maxClear) {
+        maxClear = p.dist;
+        bestAngle = a;
+      }
+    }
+    return { dx: Math.cos(bestAngle), dy: Math.sin(bestAngle) };
   }
 
   function testProbe(me, vx, vy, step = 50) {
@@ -379,6 +403,9 @@
   }
 
   function calculateDirectSteering(me, targetX, targetY) {
+    if (isCurrentlyStuck && performance.now() < stuckUntil) {
+      return getUnstuckSteer(me);
+    }
     const directAngle = Math.atan2(targetY - me.y, targetX - me.x);
     const test1 = testProbe(me, Math.cos(directAngle), Math.sin(directAngle), 35);
     if (test1.canMove) {
@@ -544,22 +571,40 @@
     let targetDest = null;
     let targetSpawn = null;
 
+    // TARGET STICKINESS: Nếu đang khóa 1 mục tiêu quái hợp lệ, còn sống và nằm trong tầm (< 420px):
+    let stickyMob = null;
+    if (currentTargetId) {
+      stickyMob = allMobs.find(m => m.id === currentTargetId);
+      if (stickyMob) {
+        const dSticky = Math.hypot(stickyMob.x - me.x, stickyMob.y - me.y);
+        const matchesCfg = (cfgTarget === 'all' || stickyMob.kind === cfgTarget || getMobDef(stickyMob)?.id === cfgTarget);
+        if (dSticky > 420 || !matchesCfg) {
+          stickyMob = null;
+        }
+      }
+    }
+
     if (cfgTarget !== 'all') {
-      const matchingMobs = allMobs.filter(m => m.kind === cfgTarget || getMobDef(m)?.id === cfgTarget);
-      if (matchingMobs.length > 0) {
-        matchingMobs.sort((a, b) => Math.hypot(a.x - me.x, a.y - me.y) - Math.hypot(b.x - me.x, b.y - me.y));
-        chosenTarget = matchingMobs[0];
+      if (stickyMob) {
+        chosenTarget = stickyMob;
         targetDest = { x: chosenTarget.x, y: chosenTarget.y };
       } else {
-        const matchingSpawns = spawns.filter(s => s.mob === cfgTarget);
-        if (matchingSpawns.length > 0) {
-          matchingSpawns.sort((a, b) => Math.hypot(a.x - me.x, a.y - me.y) - Math.hypot(b.x - me.x, b.y - me.y));
-          targetSpawn = matchingSpawns[0];
-          targetDest = { x: targetSpawn.x, y: targetSpawn.y };
+        const matchingMobs = allMobs.filter(m => m.kind === cfgTarget || getMobDef(m)?.id === cfgTarget);
+        if (matchingMobs.length > 0) {
+          matchingMobs.sort((a, b) => Math.hypot(a.x - me.x, a.y - me.y) - Math.hypot(b.x - me.x, b.y - me.y));
+          chosenTarget = matchingMobs[0];
+          targetDest = { x: chosenTarget.x, y: chosenTarget.y };
+        } else {
+          const matchingSpawns = spawns.filter(s => s.mob === cfgTarget);
+          if (matchingSpawns.length > 0) {
+            matchingSpawns.sort((a, b) => Math.hypot(a.x - me.x, a.y - me.y) - Math.hypot(b.x - me.x, b.y - me.y));
+            targetSpawn = matchingSpawns[0];
+            targetDest = { x: targetSpawn.x, y: targetSpawn.y };
+          }
         }
       }
     } else {
-      chosenTarget = activeBoss || closestMob;
+      chosenTarget = activeBoss || stickyMob || closestMob;
       if (chosenTarget) {
         targetDest = { x: chosenTarget.x, y: chosenTarget.y };
       }
@@ -699,7 +744,12 @@
     const ny = Math.round((dy / len) * 100) / 100;
 
     me.facing = dx >= 0 ? 1 : -1;
-    window.GAME.net.send({ t: 'tg', id: target.id });
+    if (target.id !== lastTargetIdSent) {
+      window.GAME.net.send({ t: 'tg', id: target.id });
+      lastTargetIdSent = target.id;
+    }
+
+    const targetRadius = target.r || getMobDef(target)?.r || 24;
 
     // 1. DUYỆT TỰ ĐỘNG CÁC CHIÊU BUFF / PHÒNG THỦ / HỒI PHỤC (range === 0 hoặc buff)
     for (const skId of currentLoadout) {
@@ -750,7 +800,7 @@
       const skRange = skDef.range || baseRange;
       const castTime = skDef.cast || 0;
 
-      if (now - lastCast >= cd + 50 && currentMp >= (skDef.mp || 0) && distToTarget <= skRange + 35) {
+      if (now - lastCast >= cd + 50 && currentMp >= (skDef.mp || 0) && distToTarget <= skRange + targetRadius + 8) {
         if (castTime > 0 && !isSafeForCastTime && !isEmergencyBreakout) {
           continue; // Bỏ qua chiêu có thời gian niệm nếu quái đang áp sát đánh trúng
         }
@@ -768,7 +818,7 @@
 
     // 4. ĐÒN ĐÁNH CƠ BẢN (AUTO-ATTACK)
     const atkCd = clsData.atkMs ? Math.max(300, clsData.atkMs * 0.45) : 380;
-    if (now - lastAtkTime >= atkCd && distToTarget <= baseRange + 45) {
+    if (now - lastAtkTime >= atkCd && distToTarget <= baseRange + targetRadius + 8) {
       window.GAME.net.send({ t: 'atk', id: target.id, x: nx, y: ny });
       lastAtkTime = now;
       devState.totalAttacks++;
@@ -1138,8 +1188,8 @@
       const pX = step.portal.x, pY = step.portal.y;
       const distPortal = Math.hypot(pX - me.x, pY - me.y);
 
-      // Chống lặp cổng (Anti-Ping-Pong): Không bước vào cổng nếu vừa mới đến map trong 1500ms
-      const isTransitionImmune = (now - lastZoneTransitionTime < 1500);
+      // Chống lặp cổng (Anti-Ping-Pong): Không bước vào cổng nếu vừa mới đến map trong 2500ms
+      const isTransitionImmune = (now - lastZoneTransitionTime < 2500);
 
       if (distPortal <= 45 && !isTransitionImmune) {
         setSteeringVector(pX - me.x, pY - me.y);
@@ -1159,7 +1209,7 @@
     if (autoShopState.phase === 'SELLING') {
       stopMoving();
       if (invInfo.sellableSlots.length > 0) {
-        if (now - autoShopState.lastActionTime >= 160) {
+        if (now - autoShopState.lastActionTime >= 130) {
           const itemToSell = invInfo.sellableSlots[0];
           window.GAME.net.send({ t: 'sell', n: itemToSell.slot });
           autoShopState.lastActionTime = now;
@@ -1220,11 +1270,14 @@
       const needCount = cfg.autoShopMinPotionsToBuy - invInfo.hpPotionCount;
 
       if (bestPotion && needCount > 0 && curGold >= potionPrice) {
-        if (now - autoShopState.lastActionTime >= 180) {
-          window.GAME.net.send({ t: 'buy', s: autoShopState.shopNpc.npcId, m: bestPotion });
+        if (now - autoShopState.lastActionTime >= 90) {
+          const batch = Math.min(3, needCount, Math.floor(curGold / potionPrice));
+          for (let b = 0; b < batch; b++) {
+            window.GAME.net.send({ t: 'buy', s: autoShopState.shopNpc.npcId, m: bestPotion });
+            autoShopState.boughtPotionsCount++;
+            devState.totalPotionsBought++;
+          }
           autoShopState.lastActionTime = now;
-          autoShopState.boughtPotionsCount++;
-          devState.totalPotionsBought++;
           const potName = GD.items[bestPotion]?.name || bestPotion;
           autoShopState.statusText = `🧪 Mua ${potName} (${invInfo.hpPotionCount}/${cfg.autoShopMinPotionsToBuy})`;
           if (statusTxt) statusTxt.textContent = autoShopState.statusText;
@@ -1250,16 +1303,25 @@
     // Phase 4: TRAVEL_TO_FARM
     if (autoShopState.phase === 'TRAVEL_TO_FARM') {
       if (curZone === autoShopState.farmZone) {
-        // Đã về tới map farm! Tiến về tọa độ ban đầu
+        // Đã về tới map farm! Khôi phục ngay mục tiêu farm
+        if (autoShopState.farmTargetMob && cfg.targetMob !== autoShopState.farmTargetMob) {
+          cfg.targetMob = autoShopState.farmTargetMob;
+          const mobSel = botPanel.querySelector('#sm-mob-sel');
+          if (mobSel) mobSel.value = cfg.targetMob;
+        }
+
         const farmX = autoShopState.farmPos.x;
         const farmY = autoShopState.farmPos.y;
         const distFarm = Math.hypot(farmX - me.x, farmY - me.y);
 
-        if (distFarm <= 85) {
+        // Kiểm tra xem quái mục tiêu đã xuất hiện xung quanh chưa hoặc đã về gần bãi (<= 110px)
+        const targetMobsNearby = Array.from(window.GAME?.mobs?.values() || []).filter(m => !(m.st & 1) && m.hp > 0 && (cfg.targetMob === 'all' || m.kind === cfg.targetMob));
+        const hasTargetNearby = targetMobsNearby.some(m => Math.hypot(m.x - me.x, m.y - me.y) <= 200);
+
+        if (distFarm <= 110 || hasTargetNearby) {
           stopMoving();
           autoShopState.active = false;
           autoShopState.phase = 'IDLE';
-          cfg.targetMob = autoShopState.farmTargetMob;
           console.log('%c[AUTO-SHOP] ĐÃ QUAY LẠI BÃI FARM AN TOÀN! TIẾP TỤC TRAIN QUÁI.', 'color: #00e676; font-weight: bold;');
           logShopEvent(`✅ Đã quay lại bãi farm an toàn tại ${curZone} (${farmX}, ${farmY})! Tiếp tục train quái.`);
           if (statusTxt) statusTxt.textContent = `✅ ĐÃ VỀ TỚI BÃI FARM! TIẾP TỤC TRAIN QUÁI!`;
@@ -1285,7 +1347,7 @@
       const step = curReturnRoute[0];
       const pX = step.portal.x, pY = step.portal.y;
       const distPortal = Math.hypot(pX - me.x, pY - me.y);
-      const isTransitionImmune = (now - lastZoneTransitionTime < 1500);
+      const isTransitionImmune = (now - lastZoneTransitionTime < 2500);
 
       if (distPortal <= 45 && !isTransitionImmune) {
         setSteeringVector(pX - me.x, pY - me.y);
@@ -1337,7 +1399,7 @@
           <div style="color: #ce93d8;">📡 Đo gói tin: <b id="sm-measured-atk">Đang theo dõi...</b></div>
           <div style="color: #81c784;">🎁 Đã nhặt: <b id="sm-s-loot">0 món</b></div>
           <div style="color: #ffca28; border-top: 1px dashed rgba(255,202,40,0.3); padding-top: 2px; margin-top: 2px;">
-            🛒 Auto-Shop: <b id="sm-shop-status">Sẵn sàng</b> | Bán: <b id="sm-trash-sold" style="color: #69f0ae;">0</b> | Mua: <b id="sm-potions-bought" style="color: #40c4ff;">0</b>
+            🛒 Auto-Shop (100 bình): <b id="sm-shop-status">Sẵn sàng</b> | Bán: <b id="sm-trash-sold" style="color: #69f0ae;">0</b> | Mua: <b id="sm-potions-bought" style="color: #40c4ff;">0</b>
           </div>
         </div>
 
@@ -1345,7 +1407,7 @@
         <div style="background: rgba(30, 24, 15, 0.85); border: 1px solid #ffb300; padding: 5px 8px; border-radius: 5px; display: flex; justify-content: space-between; align-items: center;">
           <label style="display: flex; align-items: center; gap: 5px; cursor: pointer; color: #ffe082; font-size: 10.5px; user-select: none;">
             <input type="checkbox" id="sm-toggle-autoshop" ${cfg.autoShop ? 'checked' : ''} style="cursor: pointer;">
-            <span>🛒 Tự Bán Đồ & Mua Máu</span>
+            <span>🛒 Tự Bán Đồ & Nạp 100 Bình Máu</span>
           </label>
           <button id="sm-btn-force-shop" title="Bắt đầu ngay chuyến đi bán đồ" style="background: #e65100; border: 1px solid #ff9800; color: #fff; border-radius: 3px; font-size: 9.5px; padding: 2px 7px; cursor: pointer; font-weight: bold;">Đi Bán Ngay</button>
         </div>
@@ -1820,19 +1882,51 @@
       lastZoneId = zone.id;
       lastZoneTransitionTime = now;
       lastArrivedPortalCoords = { x: me.x, y: me.y };
-      populateMobSelect();
 
-      // Nếu quái đã chọn không tồn tại trong map mới -> Tự động chuyển về [all]
-      if (cfg.targetMob !== 'all') {
-        const spawnsInNewMap = zone.spawns || [];
-        const mobsInNewMap = Array.from(window.GAME?.mobs?.values() || []);
-        const exists = spawnsInNewMap.some(s => s.mob === cfg.targetMob) || mobsInNewMap.some(m => m.kind === cfg.targetMob);
-        if (!exists) {
-          cfg.targetMob = 'all';
-          const mobSel = botPanel.querySelector('#sm-mob-sel');
-          if (mobSel) mobSel.value = 'all';
-          console.log(`[BOT] Map mới (${zone.name || zone.id}) không có quái '${cfg.targetMob}', tự động chuyển về [Tất Cả Quái].`);
-        }
+      // Chống trôi nhân vật, reset phím di chuyển & trạng thái kẹt
+      stopMoving();
+      movementState = 'STAND';
+      isCurrentlyStuck = false;
+      stuckUntil = 0;
+      lastPosCheck = { x: me.x, y: me.y, t: now };
+
+      // Reset target cũ từ map trước để tránh kẹt focus mục tiêu cũ
+      currentTargetId = null;
+      lastTargetIdSent = null;
+      if (window.GAME?.net) window.GAME.net.send({ t: 'tg', id: 0 });
+
+      // Lấy lại focus trình duyệt và canvas game (tránh mất focus điều khiển)
+      try {
+        window.focus();
+        const canvas = document.querySelector('canvas');
+        if (canvas) canvas.focus();
+      } catch (_) {}
+
+      populateMobSelect();
+      setTimeout(populateMobSelect, 350);
+
+      // Nếu đang Auto-Shop và quay về map farm: Khôi phục chính xác quái ban đầu
+      if (autoShopState.active && autoShopState.farmZone === zone.id && autoShopState.farmTargetMob) {
+        cfg.targetMob = autoShopState.farmTargetMob;
+        const mobSel = botPanel.querySelector('#sm-mob-sel');
+        if (mobSel) mobSel.value = cfg.targetMob;
+        console.log(`[BOT] Về lại map farm (${zone.id}), giữ nguyên focus quái: '${cfg.targetMob}'`);
+      } else if (!autoShopState.active && cfg.targetMob !== 'all') {
+        // Chỉ reset về 'all' nếu sau 700ms snapshot quái thực sự không có quái này
+        setTimeout(() => {
+          const curZ = window.GAME?.world?.zone;
+          if (curZ && curZ.id === zone.id && cfg.targetMob !== 'all' && !autoShopState.active) {
+            const spawnsInNewMap = curZ.spawns || [];
+            const mobsInNewMap = Array.from(window.GAME?.mobs?.values() || []);
+            const exists = spawnsInNewMap.some(s => s.mob === cfg.targetMob) || mobsInNewMap.some(m => m.kind === cfg.targetMob);
+            if (!exists) {
+              cfg.targetMob = 'all';
+              const mobSel = botPanel.querySelector('#sm-mob-sel');
+              if (mobSel) mobSel.value = 'all';
+              console.log(`[BOT] Map mới (${curZ.name || curZ.id}) không có quái, chuyển về [Tất Cả Quái].`);
+            }
+          }
+        }, 700);
       }
     }
 
@@ -1929,18 +2023,30 @@
     // ==========================================
     const isPinnedAgainstWall = (state.dMin <= 78 && state.pursuerCount >= 2);
     
-    // Theo dõi kẹt bước chân
+    // Theo dõi kẹt bước chân (Universal Stuck Breakout - kể cả lúc đi cổng/shop)
     if (now - lastPosCheck.t > 300) {
       const movedDist = Math.hypot(me.x - lastPosCheck.x, me.y - lastPosCheck.y);
-      if (movementState !== 'STAND' && movedDist < 12 && state.pursuerCount > 0) {
+      const isTryingToMove = movementState !== 'STAND' || autoShopState.active;
+      if (isTryingToMove && movedDist < 8) {
         isCurrentlyStuck = true;
         devState.breakoutsTriggered++;
-        // Bẻ lái vuông góc 90 độ tìm lối thoát
         stuckUntil = now + 450;
-      } else {
+      } else if (now >= stuckUntil) {
         isCurrentlyStuck = false;
       }
       lastPosCheck = { x: me.x, y: me.y, t: now };
+    }
+
+    // Dọn dẹp mục tiêu chết để giải phóng khóa mục tiêu (không kẹt target cũ)
+    if (currentTargetId) {
+      const curMob = window.GAME?.mobs?.get(currentTargetId);
+      if (!curMob || (curMob.st & 1) || curMob.hp <= 0) {
+        currentTargetId = null;
+        if (lastTargetIdSent) {
+          window.GAME.net.send({ t: 'tg', id: 0 });
+          lastTargetIdSent = null;
+        }
+      }
     }
 
     const snaps = window.GAME.net?.snaps;

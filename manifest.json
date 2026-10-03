@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Ancient Realm - Master Bot v13.9 (Global Dynamic)",
-  "version": "13.9.0",
-  "description": "Hệ thống toàn cầu động: Tự nhận diện mọi Shop NPC trong 26 map, chống lặp cổng khi làm nhiệm vụ, thích ứng quái mới, hỗ trợ cả 5 phái.",
+  "name": "Ancient Realm - Master Bot v13.9.7 (Auto 100 Potions & Perfect Focus)",
+  "version": "13.9.7",
+  "description": "Nạp 100 bình máu, chống mất focus quái khi đổi khu vực, tối ưu hóa di chuyển né kẹt và xả chiêu chuẩn hitbox.",
   "author": "Antigravity",
   "icons": {
     "48": "icon48.png",
