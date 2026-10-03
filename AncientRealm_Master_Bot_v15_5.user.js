@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Ancient Realm - Master Bot v15.6 (Đếm Chuẩn Bình Máu & Nạp Đủ 100 Bình, Triệt Tiêu Quái 0/1 Máu & Role Lock)
+// @name         Ancient Realm - Master Bot v15.7 (Khôi Phục Hysteresis Latch v15.0, Kiting Đa Hướng Né Cản & Non-Blocking Hazard Dodge)
 // @namespace    http://tampermonkey.net/
-// @version      15.6.0
-// @description  Đếm chính xác từng bình máu trong túi, mua liên tục đến khi đủ 100 bình không bị ngắt ở 20 bình, triệt tiêu quái 0/1 máu, chuẩn hóa môn phái & Role cận chiến / đánh xa với nút bấm 1 chạm trên Mini HUD.
+// @version      15.7.0
+// @description  Khôi phục hoàn toàn bộ máy chiến đấu đỉnh cao v15.0: Hysteresis Latch thả diều kiting đa hướng né vật cản, né chiêu boss không bị đóng băng đòn đánh, tự động tuần tra bãi quái, triệt tiêu quái 0/1 máu, đếm chuẩn nạp 100 bình máu.
 // @author       Antigravity
 // @match        *://ancientrealm.online/*
 // @match        *://*.ancientrealm.online/*
@@ -10,16 +10,19 @@
 // @grant        none
 // ==/UserScript==
 
-// AncientRealm Online - Master Bot v15.2.0 (Triệt Tiêu Quái 0/1 Máu, Chuẩn Hóa Role Đánh Xa / Gần & Keep-Range Lock)
+// AncientRealm Online - Master Bot v15.7.0 (Khôi Phục Hysteresis Latch v15.0, Kiting Đa Hướng Né Cản, Non-Blocking Hazard Dodge & Tuần Tra Bãi Quái)
 // ĐÁP ỨNG CHÍNH XÁC 100% YÊU CẦU CỦA SẾP:
-// 1. TRIỆT TIÊU HOÀN TOÀN LỖI ĐÁNH QUÁI 0 MÁU VÀ 1 MÁU (isMobValidAndAlive):
-//    - Lọc bỏ ngay lập tức bất kỳ quái nào có hp <= 1, st & 1 (chết) hoặc nằm trong danh sách deadMobIds.
-//    - Bắt sự kiện mạng ev.k === 'die' và s.n từ onSnapshot để giải phóng khóa mục tiêu ngay trong 0ms.
-// 2. CHUẨN HÓA NHẬN DIỆN VAI TRÒ ĐÁNH XA / ĐÁNH GẦN (getCharacterRoleInfo):
-//    - Bắt gói tin welcome/self từ máy chủ để lấy chính xác môn phái (cls). Mặc định là Long Tuyền Môn (85px cận chiến).
-//    - Cho phép đổi nhanh Role trực tiếp trên Mobile Mini HUD (chạm 1 lần để đổi Gần / Xa).
-// 3. LOGIC DI CHUYỂN GIỮ TẦM ĐÁNH CHUẨN XÁC THEO COVIET-EXTENSION:
-//    - Khi d <= reach: Dừng bước (stopMoving) và xả chiêu liên tục, tuyệt đối không lùi lung tung.
+// 1. KHÔI PHỤC HOÀN TOÀN HỆ THỐNG DI CHUYỂN & THẢ DIỀU V15.0 (HYSTERESIS LATCH + CONGA-KITE VECTOR):
+//    - Ranged (Âm Dương, Linh Mộc, Sơn Thần): tiếp cận đến ~82% tầm đánh (approachStop), trụ chân xả chiêu (STAND).
+//      Khi quái/boss áp sát < 68% tầm (retreatTrigger), lập tức thả diều lùi ngược (RETREAT) với Conga-Kite 16 tia né vật cản!
+//    - Melee (Thiên Vương, Long Tuyền): áp sát chặt chẽ 60-70px chém liên hoàn, chỉ lùi né dẫm chân nếu bị kẹp cứng.
+// 2. KHẮC PHỤC TRIỆT ĐỂ NÉ CHIÊU BOSS (HAZARD DODGING NON-BLOCKING & DỌN DẸP GHOST HAZARD):
+//    - Khi né vòng đỏ/vệt chiêu nguy hiểm, bot vừa di chuyển sang điểm an toàn vừa tiếp tục xả kỹ năng tầm xa (không bị đóng băng return).
+//    - Tự động xóa sạch activeHazards khi Boss chết hoặc khi chuyển map.
+// 3. TỰ ĐỘNG TUẦN TRA BÃI QUÁI (SPAWN PATROL):
+//    - Khi trên màn hình hết sạch quái, tự động di chuyển đến bãi spawn gần nhất để tìm quái thay vì đứng chôn chân.
+// 4. DUY TRÌ TOÀN BỘ CẢI TIẾN TRƯỚC ĐÓ:
+//    - Triệt tiêu hoàn toàn quái 0 máu / 1 máu (isMobValidAndAlive), nạp đủ 100 bình máu (đếm chuẩn túi đồ), nút đổi Role 1 chạm trên HUD.
 //    - Khi d > reach: Tiến thẳng về phía quái để vào cự ly ra đòn.
 //    - Vector Đẩy Lùi Vật Thể Tĩnh (Static Obstacle Repulsion):
 //      Quét toàn bộ 276 vật cản tĩnh (world.cols - cây, đá, tường) trong bán kính 90px.
@@ -635,6 +638,10 @@
                 mb.dead = true;
                 mb.hp = 0;
                 mb.st |= 1;
+                const def = getMobDef(mb);
+                if (def?.boss || def?.elite || ['chantinh','daibang','moctinh','xuongho'].includes(mb.kind)) {
+                  activeHazards.length = 0;
+                }
               }
               if (currentTargetId === deadId) {
                 currentTargetId = null;
@@ -1198,7 +1205,26 @@
       };
     }
 
+    // Chưa thấy quái nào trên màn hình:
+    // Nếu có bãi spawn trên bản đồ, di chuyển đến bãi spawn gần nhất để tìm quái thay vì đứng chôn chân!
     currentTargetId = null;
+    const validSpawns = (spawns || []).filter(sp => sp && typeof sp.x === 'number' && typeof sp.y === 'number');
+    if (validSpawns.length > 0) {
+      validSpawns.sort((a, b) => Math.hypot(a.x - me.x, a.y - me.y) - Math.hypot(b.x - me.x, b.y - me.y));
+      const nearestSpawn = validSpawns[0];
+      return {
+        target: null,
+        navigatingSpawn: nearestSpawn,
+        dMin: dMin === Infinity ? 999 : dMin,
+        closestMob,
+        pursuers: pursuers.map(p => p.mob),
+        pursuerCount: pursuers.length,
+        spawnCenter: { x: nearestSpawn.x, y: nearestSpawn.y, r: nearestSpawn.r || 200 },
+        isBoss: false,
+        isPeeling: false
+      };
+    }
+
     return {
       target: null,
       dMin: dMin === Infinity ? 999 : dMin,
@@ -2428,7 +2454,7 @@
                   cursor: grab; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(0,230,118,0.3);">
         <div style="display: flex; align-items: center; gap: 7px; font-weight: bold; font-size: 12px; color: #fff;">
           <span style="font-size: 14px;">🤖</span>
-          <span style="background: linear-gradient(90deg, #00e676, #00b0ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 800; letter-spacing: 0.5px;">CỔ GIỚI BOT v15.0</span>
+          <span style="background: linear-gradient(90deg, #00e676, #00b0ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 800; letter-spacing: 0.5px;">CỔ GIỚI BOT v15.7</span>
           <span style="background: rgba(0,230,118,0.2); border: 1px solid #00e676; color: #00e676; font-size: 9px; padding: 1px 5px; border-radius: 8px; font-weight: 700;">60 FPS</span>
         </div>
         <div style="display: flex; gap: 6px; align-items: center;">
@@ -2671,7 +2697,7 @@
       
       <!-- Top Telemetry Row -->
       <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 4px;">
-        <span id="sm-mini-status" style="font-weight: bold; color: #00e676; font-size: 11px;">🟢 v15.2.0</span>
+        <span id="sm-mini-status" style="font-weight: bold; color: #00e676; font-size: 11px;">🟢 v15.7.0</span>
         <span style="color: #ff5252;">❤️ <b id="sm-mini-hp">100%</b></span>
         <span style="color: #69f0ae;">🩸 <b id="sm-mini-pots">0</b></span>
         <span style="color: #ffd740;">💰 <b id="sm-mini-gold">0</b></span>
@@ -3666,7 +3692,9 @@
       if (now > activeHazards[i].until) activeHazards.splice(i, 1);
     }
     const dangerousHazard = activeHazards.find(h => isPointInsideHazard(h, me.x, me.y));
+    let isDodgingHazard = false;
     if (dangerousHazard) {
+      isDodgingHazard = true;
       movementState = 'RETREAT';
       devState.swingDodged++;
       const safePt = findSafeDodgePoint(me, activeHazards);
@@ -3682,15 +3710,15 @@
         miniStateEl.textContent = `⚠️ Né ${dangerousHazard.sh || 'chiêu'}`;
         miniStateEl.style.color = '#ff5252';
       }
-      return;
+      // Không return: tiếp tục chạy xuống xử lý mục tiêu & xả chiêu tầm xa trong lúc lùi né!
     }
 
     const state = resolveTargetAndState(me);
     if (dminTxt) dminTxt.textContent = `${Math.round(state.dMin)}px`;
     if (pursuersTxt) pursuersTxt.textContent = `${state.pursuerCount} con`;
 
-    // Không coi việc quái áp sát 78px là bị ép vách (vì cận chiến phải đứng 70-90px để chém!)
-    const isPinnedAgainstWall = false;
+    // Phá vây nếu đánh xa bị 2 quái trở lên áp sát 78px
+    const isPinnedAgainstWall = (!getCharacterRoleInfo().isMelee && state.dMin <= 78 && state.pursuerCount >= 2);
     
     // Theo dõi kẹt bước chân (Universal Stuck Breakout - kể cả lúc đi cổng/shop)
     if (now - lastPosCheck.t > 300) {
@@ -3810,61 +3838,140 @@
       targetTxt.textContent = `${addPrefix}${mobName} [${targetMob.hp}/${targetMob.maxHp}] (${Math.round(distToTarget)}px)`;
     }
 
+    let retreatTrigger, retreatSafe, approachTrigger, approachStop;
     const roleInfo = getCharacterRoleInfo();
     const isPlayerMelee = roleInfo.isMelee;
     const baseRange = roleInfo.baseRange;
-    const targetRadius = targetMob.r || def?.r || 24;
 
-    // TẦM ĐÁNH CHUẨN XÁC THEO COVIET-EXTENSION:
-    // Melee dùng 0.85 -> reach = (85 + 24) * 0.85 = 93px (luôn áp sát vững chắc)
-    // Ranged dùng 0.88 -> reach = (280 + 24) * 0.88 = 267px (đứng từ xa xả chiêu)
-    const keepRangeRatio = isPlayerMelee ? 0.85 : 0.88;
-    const reach = Math.max(35, Math.round((baseRange + targetRadius) * keepRangeRatio));
+    if (state.isPvP) {
+      if (state.isMeleeOpponent) {
+        retreatTrigger = isPlayerMelee ? 60 : Math.round(baseRange * 0.72);
+        retreatSafe = isPlayerMelee ? 85 : Math.round(baseRange * 0.92);
+        approachTrigger = isPlayerMelee ? 110 : Math.round(baseRange * 1.08);
+        approachStop = isPlayerMelee ? 65 : Math.round(baseRange * 0.85);
+      } else if (state.isRangedOpponent) {
+        retreatTrigger = isPlayerMelee ? 70 : Math.round(baseRange * 0.75);
+        retreatSafe = isPlayerMelee ? 95 : Math.round(baseRange * 0.95);
+        approachTrigger = isPlayerMelee ? 130 : Math.round(baseRange * 1.12);
+        approachStop = isPlayerMelee ? 70 : Math.round(baseRange * 0.88);
+      } else {
+        retreatTrigger = isPlayerMelee ? 60 : Math.round(baseRange * 0.72);
+        retreatSafe = isPlayerMelee ? 85 : Math.round(baseRange * 0.92);
+        approachTrigger = isPlayerMelee ? 110 : Math.round(baseRange * 1.08);
+        approachStop = isPlayerMelee ? 65 : Math.round(baseRange * 0.85);
+      }
+    } else {
+      if (isPlayerMelee) {
+        // VAI TRÒ ĐÁNH GẦN (MELEE): Cận chiến áp sát ~60-70px chém liên hoàn, không lùi chạy lung tung trước quái thường
+        retreatTrigger = state.isBoss ? 55 : 35;
+        retreatSafe = state.isBoss ? 90 : 75;
+        approachTrigger = state.isBoss ? 125 : 105;
+        approachStop = state.isBoss ? 70 : 60;
+      } else {
+        // VAI TRÒ ĐÁNH XA (RANGED): Giữ cự ly vàng, đứng từ xa xả chiêu, thả diều (kiting) khi quái áp sát
+        retreatTrigger = state.isBoss ? Math.round(baseRange * 0.75) : Math.round(baseRange * 0.68);
+        retreatSafe = state.isBoss ? Math.round(baseRange * 0.95) : Math.round(baseRange * 0.88);
+        approachTrigger = state.isBoss ? Math.round(baseRange * 1.12) : Math.round(baseRange * 1.06);
+        approachStop = state.isBoss ? Math.round(baseRange * 0.88) : Math.round(baseRange * 0.82);
+      }
+    }
 
-    if (isCurrentlyStuck && now < stuckUntil) {
-      movementState = 'BREAKOUT';
+    if (isDodgingHazard) {
+      // Đang né chiêu đỏ: Vector di chuyển đã được thiết lập né ra điểm an toàn (findSafeDodgePoint)!
+    } else if (isPinnedAgainstWall || (isCurrentlyStuck && now < stuckUntil)) {
+      movementState = 'RETREAT';
+      // Dò tia có độ dài di chuyển tối đa trong 16 hướng ra khoảng trống
       const kiteVec = computeCongaKiteVector(me, state.pursuers, state.spawnCenter, state.isBoss);
       setSteeringVector(kiteVec.vx, kiteVec.vy);
       if (statusTxt) {
-        statusTxt.textContent = `🚨 GỠ KẸT ĐỊA HÌNH: Đang trượt bẻ lái ra khoảng trống!`;
-      }
-    } else if (distToTarget <= reach) {
-      // ĐÃ VÀO TẦM ĐÁNH: ĐỨNG YÊN TUYỆT ĐỐI & DỪNG BƯỚC CHÂN (stopMoving)
-      movementState = 'STAND';
-      stopMoving();
-      if (statusTxt) {
-        if (state.isPvP) {
-          statusTxt.textContent = `⚔️ ĐẤU CHIÊU SOLO: Xả combo dồn ép ${targetMob.name} (${Math.round(distToTarget)}px <= ${reach}px)!`;
-        } else if (state.isAddClear) {
-          statusTxt.textContent = `⚔️ ĐỨNG BẮN GỤC ĐỆ TỬ (${Math.round(state.dMin)}px): Dọn sạch quái đệ tử!`;
-        } else if (state.isRetaliation) {
-          statusTxt.textContent = `🛡️ TRỤ CHÂN VẢ CHẾT KẺ CẮN LÉN: ${mobName} (${Math.round(distToTarget)}px)!`;
-        } else if (state.isRoadblock) {
-          statusTxt.textContent = `🚧 ĐỨNG BẮN DỌN VẬT CẢN: ${mobName} (${Math.round(distToTarget)}px)!`;
-        } else {
-          statusTxt.textContent = isPlayerMelee
-            ? `⚔️ CẬN CHIẾN CHÉM LIÊN HOÀN (${Math.round(distToTarget)}px <= ${reach}px): KHÓA TẦM XẢ CHIÊU!`
-            : `🏹 TRỤ CHÂN XẢ CHIÊU TẦM XA (${Math.round(distToTarget)}px <= ${reach}px): KHÓA TẦM XẢ CHIÊU!`;
-        }
+        statusTxt.textContent = `🚨 PHÁ VÂY KHẨN CẤP: Bẻ lái trượt qua khe quái ra khoảng trống!`;
       }
     } else {
-      // NGOÀI TẦM ĐÁNH: TIẾP CẬN THẲNG VÀO MỤC TIÊU
-      movementState = 'APPROACH';
-      const steer = calculateDirectSteering(me, targetMob.x, targetMob.y);
-      setSteeringVector(steer.dx, steer.dy);
-      if (statusTxt) {
-        statusTxt.textContent = state.isPvP 
-          ? `⚡ TIẾP CẬN SOLO: ${targetMob.name} (${Math.round(distToTarget)}px -> ${reach}px)` 
-          : (isPlayerMelee 
-              ? `⚔️ TIẾP CẬN ÁP SÁT: ${mobName} (${Math.round(distToTarget)}px -> ${reach}px)` 
-              : `🏹 TIẾP CẬN TẦM XA: ${mobName} (${Math.round(distToTarget)}px -> ${reach}px)`);
+      // Hysteresis Latch chuẩn v15.0
+      if (movementState === 'STAND') {
+        if (state.dMin < retreatTrigger || state.isPeeling) {
+          movementState = 'RETREAT';
+        } else if (distToTarget > approachTrigger) {
+          movementState = 'APPROACH';
+        }
+      } else if (movementState === 'RETREAT') {
+        if (state.dMin >= retreatSafe && !state.isPeeling) {
+          movementState = 'STAND';
+        }
+      } else if (movementState === 'APPROACH') {
+        if (distToTarget <= approachStop) {
+          movementState = 'STAND';
+        } else if (state.dMin < retreatTrigger) {
+          movementState = 'RETREAT';
+        }
+      }
+
+      if (movementState === 'RETREAT') {
+        let vx, vy;
+        if (state.isPvP && state.isRangedOpponent) {
+          // Né chiêu định hướng của Sơn Thần: Di chuyển đảo hướng zic-zac 90 độ (Perpendicular Strafe)
+          const dx = me.x - targetMob.x, dy = me.y - targetMob.y;
+          const d = Math.hypot(dx, dy) || 1;
+          const ux = dx / d, uy = dy / d;
+          const tx = -uy, ty = ux;
+          const strafeDir = (Math.floor(now / 1200) % 2 === 0) ? 1 : -1;
+          vx = ux * 0.4 + tx * 0.6 * strafeDir;
+          vy = uy * 0.4 + ty * 0.6 * strafeDir;
+        } else {
+          const kiteVec = computeCongaKiteVector(me, state.pursuers, state.spawnCenter, state.isBoss);
+          vx = kiteVec.vx;
+          vy = kiteVec.vy;
+        }
+        setSteeringVector(vx, vy);
+        if (statusTxt) {
+          if (state.isPvP) {
+            statusTxt.textContent = `🏃 NÉ TẦM CHIÊU ĐỐI THỦ: ${targetMob.name} (${Math.round(distToTarget)}px -> ${retreatSafe}px)`;
+          } else if (state.isAddClear) {
+            statusTxt.textContent = `⚔️ FOCUS DIỆT ĐỆ TỬ CỦA BOSS: ${mobName} (${Math.round(state.dMin)}px)`;
+          } else if (state.isRetaliation) {
+            statusTxt.textContent = `🛡️ TỰ VỆ PHẢN CÔNG: ${mobName} đang cắn lén (${Math.round(state.dMin)}px)!`;
+          } else if (state.isRoadblock) {
+            statusTxt.textContent = `🚧 MỞ ĐƯỜNG TIẾN BÃI: Dọn ${mobName} chắn lối (${Math.round(state.dMin)}px)!`;
+          } else {
+            statusTxt.textContent = state.isPeeling
+              ? `🛡️ PHÁ VÒNG VÂY: d_min=${Math.round(state.dMin)}px`
+              : `🏃 LÙI THẢ DIỀU & TRÁNH CẢN: ${mobName} (${Math.round(state.dMin)}px -> ${retreatSafe}px)`;
+          }
+        }
+      } else if (movementState === 'APPROACH') {
+        const steer = calculateDirectSteering(me, targetMob.x, targetMob.y);
+        setSteeringVector(steer.dx, steer.dy);
+        if (statusTxt) {
+          statusTxt.textContent = state.isPvP 
+            ? `⚡ TIẾP CẬN SOLO: ${targetMob.name} (${Math.round(distToTarget)}px)` 
+            : (isPlayerMelee 
+                ? `⚔️ TIẾP CẬN ÁP SÁT: ${mobName} (${Math.round(distToTarget)}px -> ${approachStop}px)` 
+                : `🏹 TIẾP CẬN TẦM XA: ${mobName} (${Math.round(distToTarget)}px -> ${approachStop}px)`);
+        }
+      } else {
+        stopMoving();
+        if (statusTxt) {
+          if (state.isPvP) {
+            statusTxt.textContent = `⚔️ ĐẤU CHIÊU SOLO: Xả combo dồn ép ${targetMob.name} (${Math.round(distToTarget)}px)!`;
+          } else if (state.isAddClear) {
+            statusTxt.textContent = `⚔️ ĐỨNG BẮN GỤC ĐỆ TỬ (${Math.round(state.dMin)}px): Dọn sạch quái đệ tử!`;
+          } else if (state.isRetaliation) {
+            statusTxt.textContent = `🛡️ TRỤ CHÂN VẢ CHẾT KẺ CẮN LÉN: ${mobName} (${Math.round(distToTarget)}px)!`;
+          } else if (state.isRoadblock) {
+            statusTxt.textContent = `🚧 ĐỨNG BẮN DỌN VẬT CẢN: ${mobName} (${Math.round(distToTarget)}px)!`;
+          } else {
+            statusTxt.textContent = isPlayerMelee
+              ? `⚔️ CẬN CHIẾN CHÉM LIÊN HOÀN (${Math.round(distToTarget)}px): XẢ FULL SKILL!`
+              : `🏹 TRỤ CHÂN XẢ CHIÊU TẦM XA (${Math.round(distToTarget)}px): XẢ FULL SKILL!`;
+          }
+        }
       }
     }
 
     // Xả kỹ năng: Khi bị vây khẩn cấp, kích hoạt Choáng diện rộng ngay lập tức!
     executeOracleAttack(targetMob, now, distToTarget, state.dMin, state.closestMob, state.pursuerCount, isPinnedAgainstWall, state.isPvP);
 
-    if (miniStatusEl) miniStatusEl.textContent = cfg.enabled ? '🟢 Bot v15.2.0' : '🔴 Tạm dừng';
+    if (miniStatusEl) miniStatusEl.textContent = cfg.enabled ? '🟢 Bot v15.7.0' : '🔴 Tạm dừng';
     if (miniAtkEl) miniAtkEl.textContent = devState.totalAttacks;
     if (miniBreakoutEl) miniBreakoutEl.textContent = devState.breakoutsTriggered;
     if (miniStateEl && statusTxt) miniStateEl.textContent = statusTxt.textContent;
@@ -3872,7 +3979,7 @@
 
 
   window._ancientMasterBot = {
-    version: '15.2.0',
+    version: '15.7.0',
     cfg,
     devState,
     skillTimers,
@@ -3897,10 +4004,10 @@
       if (origUiChatLine && window.GAME?.ui) window.GAME.ui.chatLine = origUiChatLine;
       if (origUiToggleChat && window.GAME?.ui) window.GAME.ui.toggleChat = origUiToggleChat;
       delete window._ancientMasterBot;
-      console.log("%c[BOT v15.2.0] Đã gỡ bỏ toàn bộ giao diện và tiến trình.", "color: #ff9800; font-weight: bold;");
+      console.log("%c[BOT v15.7.0] Đã gỡ bỏ toàn bộ giao diện và tiến trình.", "color: #ff9800; font-weight: bold;");
     }
   };
 
-    console.log("%c[BOT v15.2.0] KHỞI ĐỘNG THÀNH CÔNG: TRIỆT TIÊU QUÁI 0/1 MÁU, CHUẨN HÓA ROLE & KHÓA TẦM ĐÁNH!", "color: #00e676; font-size: 14px; font-weight: bold;");
+    console.log("%c[BOT v15.7.0] KHỞI ĐỘNG THÀNH CÔNG: KHÔI PHỤC HYSTERESIS LATCH v15.0, KITING ĐA HƯỚNG & TUẦN TRA BÃI QUÁI!", "color: #00e676; font-size: 14px; font-weight: bold;");
   }
 })();

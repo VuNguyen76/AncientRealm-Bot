@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Ancient Realm - Master Bot v15.6 (Đếm Chuẩn Bình Máu & Nạp Đủ 100 Bình)",
-  "version": "15.6.0",
-  "description": "Đếm chính xác từng bình máu trong túi, nạp đủ 100 bình không dừng ở 20 bình, triệt tiêu quái 0/1 máu, chuẩn hóa Role cận chiến/đánh xa.",
+  "name": "Ancient Realm - Master Bot v15.7 (Khôi Phục Hysteresis Kiting & Combat v15.0)",
+  "version": "15.7.0",
+  "description": "Khôi phục toàn bộ chiến đấu linh hoạt v15.0: thả diều Hysteresis Latch, né cản 16 tia Conga-Kite, né chiêu Boss không chặn đòn đánh, tuần tra bãi quái.",
   "author": "Antigravity",
   "icons": {
     "48": "icon48.png",
