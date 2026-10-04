@@ -2142,10 +2142,42 @@
     return spots.reduce((b, s, i) => (Math.hypot(s.x - me.x, s.y - me.y) < Math.hypot(spots[b].x - me.x, spots[b].y - me.y) ? i : b), 0);
   }
 
+  const questBlacklist = new Set();
+
+  function countItemInInventory(itemId) {
+    const inv = window.GAME?.self?.inv || [];
+    let count = 0;
+    for (const it of inv) {
+      if (it && it.id === itemId) count += (typeof it.n === 'number' && it.n > 0 ? it.n : 1);
+    }
+    return count;
+  }
+
+  function isQuestValid(q) {
+    if (!q || q.done) return false;
+    if (questBlacklist.has(q.id)) return false;
+
+    // BỘ PHÁT HIỆN & BẢO VỆ NHIỆM VỤ THIẾU VẬT PHẨM (v16.2.0 - Fix lỗi kẹt Ma Da Bến Sông):
+    const def = getQuestDef(q.id);
+    const step = def?.steps?.[q.step || 0];
+    if (step && step.type === 'use') {
+      const requiredItem = step.item || (q.id === 's7_mada' ? 'q_dentroi' : null);
+      if (requiredItem && countItemInInventory(requiredItem) <= 0) {
+        if (!questBlacklist.has(q.id)) {
+          questBlacklist.add(q.id);
+          console.warn(`[QUEST ENGINE] ⚠️ Bỏ qua nhiệm vụ [${def?.name || q.name || q.id}]: Thiếu vật phẩm '${requiredItem}' trong hành trang!`);
+          logShopEvent(`⚠️ Bỏ qua nhiệm vụ [${def?.name || q.name || q.id}] do thiếu vật phẩm [${requiredItem}]!`);
+        }
+        return false;
+      }
+    }
+    return true;
+  }
+
   function getActiveQuest() {
     const ui = window.GAME?.ui;
     const self = window.GAME?.self;
-    const list = self?.quests?.list || [];
+    const list = (self?.quests?.list || []).filter(isQuestValid);
 
     // 1. Ưu tiên cao nhất: Nhiệm vụ đã hoàn thành mục tiêu, sẵn sàng trả (q.ready)
     const readyQ = list.find(q => q && q.ready && !q.done);
