@@ -4958,7 +4958,7 @@
         devState.retaliationTargetId = selfDefenseThreat.id;
         devState.selfDefenseCount++;
         if (statusTxt) {
-          statusTxt.textContent = 🛡️ TỰ VỆ LÀM Q: Đang đánh trả [] cắn lén (px)!;
+          statusTxt.textContent = '🛡️ TỰ VỆ LÀM Q: Đang đánh trả [' + (selfDefenseThreat.name || selfDefenseThreat.kind) + '] cắn lén (' + Math.round(Math.hypot(selfDefenseThreat.x - me.x, selfDefenseThreat.y - me.y)) + 'px)!';
         }
       } else {
         devState.retaliationTargetId = null;
