@@ -2784,8 +2784,8 @@
     const GD = window.GAME?.GD;
     if (!self || !GD?.skills || !GD?.training) return null;
 
-    const classDef = GD.appearance?.[self.cls] || GD.classes?.[self.cls];
-    const skillIds = classDef?.skills || Object.keys(self.sks || {});
+    const classDef = GD.classes?.[self.cls] || GD.appearance?.[self.cls];
+    const skillIds = (classDef && classDef.skills) ? classDef.skills : Object.keys(self.sks || {});
     const ranks = GD.training.ranks || [];
 
     for (const skId of skillIds) {
@@ -5058,6 +5058,10 @@
     applySkillLoadout,
     openChat,
     minimizeChat,
+    upgradeState,
+    getSkillUpgradeAnalysis,
+    getGearEnhanceAnalysis,
+    questBlacklist,
     destroy() {
       clearInterval(mainLoop);
       stopMoving();
