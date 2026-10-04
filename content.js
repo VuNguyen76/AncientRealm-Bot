@@ -3456,7 +3456,7 @@
                   cursor: grab; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(0,230,118,0.3);">
         <div style="display: flex; align-items: center; gap: 7px; font-weight: bold; font-size: 12px; color: #fff;">
           <span style="font-size: 14px;">🤖</span>
-          <span style="background: linear-gradient(90deg, #00e676, #00b0ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 800; letter-spacing: 0.5px;">CỔ GIỚI BOT v15.9</span>
+          <span style="background: linear-gradient(90deg, #00e676, #00b0ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 800; letter-spacing: 0.5px;">CỔ GIỚI BOT v16.2.0</span>
           <span style="background: rgba(0,230,118,0.2); border: 1px solid #00e676; color: #00e676; font-size: 9px; padding: 1px 5px; border-radius: 8px; font-weight: 700;">60 FPS</span>
         </div>
         <div style="display: flex; gap: 6px; align-items: center;">
