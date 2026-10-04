@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Ancient Realm - Master Bot v16.1 (Vua Làm Nhiệm Vụ & Quét Quái Toàn Năng)",
-  "version": "16.1.0",
-  "description": "Vua làm nhiệm vụ NPC và quét quái toàn diện: sửa 100% drop mob scanning, thủ thành Defend, dùng điểm Use, hái lượm Gather Nodes và tuần tra chuyển bãi thông minh.",
+  "name": "Ancient Realm - Master Bot v16.2 (Vua Nâng Cấp Kỹ Năng & Cường Hóa Trang Bị)",
+  "version": "16.2.0",
+  "description": "Tự động cày nguyên liệu & nâng cấp kỹ năng, cường hóa trang bị (+3, +5, +7), menu săn nhanh nguyên liệu toàn cõi, bảo vệ 100% nguyên liệu quý và tự động bỏ qua nhiệm vụ thiếu vật phẩm.",
   "author": "Antigravity",
   "icons": {
     "48": "icon48.png",

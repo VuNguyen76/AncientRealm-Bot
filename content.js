@@ -1,4 +1,4 @@
-// AncientRealm Online - Master Bot v16.0.0 (Vua Né Chiêu Boss & Triệt Tiêu Góc Chết, Khắc Phục Triệt Để Quái Over Tầm & 0 Máu)
+// AncientRealm Online - Master Bot v16.2.0 (Vua Nâng Cấp Kỹ Năng & Cường Hóa Trang Bị, Tự Động Săn Nguyên Liệu & Khắc Phục Kẹt Q Sông Bạch Đằng)
 // KẾ THỪA & NÂNG CẤP TOÀN DIỆN TỪ KIẾN TRÚC COVIET (D:\coviet-4\coviet):
 // 1. TRIỆT TIÊU TẬN GỐC HIỆN TƯỢNG ĐỨNG IM CHÔN CHÂN (FREEZE / DEAD MOB POISONING):
 //    - Xóa bỏ vĩnh viễn bộ nhớ đệm độc hại deadMobIds. Chuẩn hóa cờ sống chết theo CoViet sync.js: !(m.st & 1) && m.hp > 0.
@@ -2539,6 +2539,558 @@
     return false;
   }
 
+  
+  // =========================================================================
+  // BỘ TỰ ĐỘNG SĂN NGUYÊN LIỆU & NÂNG CẤP KỸ NĂNG, CƯỜNG HÓA TRANG BỊ (v16.2.0)
+  // =========================================================================
+
+  const UPGRADE_MATS = {
+    // 1. KỸ NĂNG (SKILLS)
+    m_ngoctrai: {
+      id: 'm_ngoctrai',
+      name: 'Ngọc Trai',
+      icon: '⚪',
+      zone: 'dam',
+      zoneName: 'Đầm Dạ Trạch',
+      targetMob: 'giaolong',
+      coords: [2350, 2350],
+      mobs: ['giaolong', 'haitac', 'ngubinh'],
+      desc: 'Nâng Skill Bậc 2 (cần 3 viên)'
+    },
+    m_longdaibang: {
+      id: 'm_longdaibang',
+      name: 'Lông Đại Bàng',
+      icon: '🪶',
+      zone: 'kimson',
+      zoneName: 'Núi Kim Sơn',
+      targetMob: 'daibang',
+      coords: [3080, 420],
+      mobs: ['daibang'],
+      desc: 'Nâng Skill Bậc 3 (cần 3 chiếc)'
+    },
+    m_manhdong: {
+      id: 'm_manhdong',
+      name: 'Mảnh Đồng Cổ',
+      icon: '🥉',
+      zone: 'kimson',
+      zoneName: 'Núi Kim Sơn',
+      targetMob: 'chuachuot',
+      coords: [800, 2420],
+      mobs: ['chuachuot', 'lonmo'],
+      desc: 'Nâng Skill Bậc 3 (cần 2 mảnh)'
+    },
+
+    // 2. CƯỜNG HÓA TRANG BỊ (EQUIPMENT ENHANCE)
+    // Tier 1-2 (Lv 1-9)
+    m_dalon: {
+      id: 'm_dalon',
+      name: 'Da Lợn Rừng',
+      icon: '🟫',
+      zone: 'doi',
+      zoneName: 'Đồi Trung Du',
+      targetMob: 'lon',
+      coords: [1250, 1650],
+      mobs: ['lon'],
+      desc: 'Cường hóa đồ Lv 1-4'
+    },
+    m_canhdoi: {
+      id: 'm_canhdoi',
+      name: 'Cánh Dơi',
+      icon: '🦇',
+      zone: 'doi',
+      zoneName: 'Đồi Trung Du',
+      targetMob: 'doi',
+      coords: [2350, 780],
+      mobs: ['doi'],
+      desc: 'Cường hóa đồ Lv 5-9'
+    },
+    m_longcao: {
+      id: 'm_longcao',
+      name: 'Lông Cáo Bạc',
+      icon: '🦊',
+      zone: 'doi',
+      zoneName: 'Đồi Trung Du',
+      targetMob: 'caoho',
+      coords: [2860, 1660],
+      mobs: ['caoho'],
+      desc: 'Cường hóa cao cấp Lv 1-9 (+8..+10)'
+    },
+
+    // Tier 3 (Lv 10-19)
+    m_rangcasau: {
+      id: 'm_rangcasau',
+      name: 'Răng Cá Sấu',
+      icon: '🦷',
+      zone: 'dam',
+      zoneName: 'Đầm Dạ Trạch',
+      targetMob: 'casau',
+      coords: [2000, 950],
+      mobs: ['casau', 'thuongluong'],
+      desc: 'Cường hóa đồ Lv 10-19'
+    },
+
+    // Tier 4 (Lv 20-29)
+    m_nanhheo: {
+      id: 'm_nanhheo',
+      name: 'Nanh Heo Rừng',
+      icon: '🐗',
+      zone: 'bavi',
+      zoneName: 'Rừng Ba Vì',
+      targetMob: 'heorung',
+      coords: [1100, 700],
+      mobs: ['heorung'],
+      desc: 'Cường hóa đồ Lv 20-29'
+    },
+    m_dabao: {
+      id: 'm_dabao',
+      name: 'Da Báo Gấm',
+      icon: '🐆',
+      zone: 'bavi',
+      zoneName: 'Rừng Ba Vì',
+      targetMob: 'baogam',
+      coords: [2150, 1900],
+      mobs: ['baogam', 'hoba'],
+      desc: 'Cường hóa cao cấp Lv 20-29 (+8..+10)'
+    },
+
+    // Tier 5 (Lv 30-39)
+    m_buavang: {
+      id: 'm_buavang',
+      name: 'Bùa Vàng Trấn Thi',
+      icon: '📜',
+      zone: 'hoangtuyen',
+      zoneName: 'Hoàng Tuyền',
+      targetMob: 'cuongthi',
+      coords: [500, 800],
+      mobs: ['cuongthi'],
+      desc: 'Cường hóa đồ Lv 30-39'
+    },
+    m_xichnguc: {
+      id: 'm_xichnguc',
+      name: 'Xích Ngục Âm Phủ',
+      icon: '⛓️',
+      zone: 'hoangtuyen',
+      zoneName: 'Hoàng Tuyền',
+      targetMob: 'nguctuong',
+      coords: [3220, 2340],
+      mobs: ['nguctuong'],
+      desc: 'Cường hóa cao cấp Lv 30-39 (+8..+10)'
+    },
+
+    // Tier 6 (Lv 40-45)
+    m_xuongam: {
+      id: 'm_xuongam',
+      name: 'Xương Âm Binh',
+      icon: '🦴',
+      zone: 'hatmon',
+      zoneName: 'Đầm Hát Môn',
+      targetMob: 'ambinh',
+      coords: [2800, 720],
+      mobs: ['ambinh', 'ambinhcung'],
+      desc: 'Cường hóa đồ Lv 40-45 (Tier 5: +1..+7)'
+    },
+    m_buayem: {
+      id: 'm_buayem',
+      name: 'Bùa Yểm Cao Biền',
+      icon: '🧧',
+      zone: 'hatmon',
+      zoneName: 'Đầm Hát Môn',
+      targetMob: 'choyem',
+      coords: [3150, 700],
+      mobs: ['choyem', 'amky'],
+      desc: 'Cường hóa cao cấp Lv 40-45 (+8..+10)'
+    },
+
+    // Tier 7 (Lv 46+)
+    m_duoichuot: {
+      id: 'm_duoichuot',
+      name: 'Đuôi Chuột Yểm',
+      icon: '🐀',
+      zone: 'daila',
+      zoneName: 'Thành Đại La',
+      targetMob: 'chuotyem',
+      coords: [1250, 650],
+      mobs: ['chuotcong', 'chuotyem'],
+      desc: 'Cường hóa đồ Lv 46+ (Tier 6: +1..+7)'
+    },
+    m_manhgiap: {
+      id: 'm_manhgiap',
+      name: 'Mảnh Giáp Âm Tướng',
+      icon: '🛡️',
+      zone: 'daila',
+      zoneName: 'Thành Đại La',
+      targetMob: 'amtuong',
+      coords: [3000, 1750],
+      mobs: ['amtuong'],
+      desc: 'Cường hóa cao cấp Lv 46+ (+8..+10)'
+    },
+
+    // 3. BÙA HỘ RÈN
+    m_buahoren: {
+      id: 'm_buahoren',
+      name: 'Bùa Hộ Rèn',
+      icon: '🧧',
+      zone: 'dongthien',
+      zoneName: 'Săn Boss Động Thiên',
+      targetMob: 'nghechua',
+      coords: [1350, 700],
+      mobs: ['nghechua', 'todinh', 'xuongho'],
+      desc: 'Bùa hộ mệnh không tụt cấp khi rèn xịt'
+    }
+  };
+
+  const TRAINER_LIST = [
+    { zone: 'lang', id: 'thaycung', name: 'Thầy Cúng Lão Mộc', x: 780, y: 262 },
+    { zone: 'chuxa', id: 'chudongtu', name: 'Chử Đồng Tử', x: 740, y: 480 },
+    { zone: 'banmuong', id: 'sonthanh', name: 'Tản Viên Sơn Thánh', x: 800, y: 440 },
+    { zone: 'coloa', id: 'caolo', name: 'Tướng Cao Lỗ', x: 470, y: 760 },
+    { zone: 'mieu', id: 'thanhhoang', name: 'Thành Hoàng', x: 800, y: 575 }
+  ];
+
+  const BLACKSMITH_LIST = [
+    { zone: 'lang', id: 'thoren', name: 'Thợ Rèn Đồng Sơn', x: 440, y: 760 },
+    { zone: 'coloa', id: 'thoduc', name: 'Thợ Đúc Đông Sơn', x: 640, y: 880 },
+    { zone: 'thanglong', id: 'thorenkinh', name: 'Lò Rèn Kinh Thành', x: 820, y: 900 }
+  ];
+
+  const upgradeState = {
+    active: false,
+    mode: 'none', // 'skill' | 'gear' | 'quick_mat'
+    step: 'IDLE', // 'FARMING' | 'NAV_UPGRADE' | 'TALKING'
+    targetMat: null,
+    targetSkill: null,
+    targetGearSlot: null,
+    targetGearIndex: null,
+    targetNpc: null,
+    lastActionTime: 0,
+    statusText: '',
+    consecutiveFails: 0
+  };
+
+  function getSkillUpgradeAnalysis() {
+    const self = window.GAME?.self;
+    const GD = window.GAME?.GD;
+    if (!self || !GD?.skills || !GD?.training) return null;
+
+    const classDef = GD.appearance?.[self.cls] || GD.classes?.[self.cls];
+    const skillIds = classDef?.skills || Object.keys(self.sks || {});
+    const ranks = GD.training.ranks || [];
+
+    for (const skId of skillIds) {
+      const skDef = GD.skills[skId];
+      if (!skDef) continue;
+      const curRank = self.sks?.[skId]?.r || 1;
+      if (curRank >= 3) continue; // Đã đạt Rank 3 tối đa
+
+      const nextRankCost = ranks.find(r => r.rank === curRank + 1);
+      if (!nextRankCost) continue;
+
+      const missingMats = [];
+      let allMatsReady = true;
+
+      for (const [matId, reqQty] of nextRankCost.mats || []) {
+        const have = countItemInInventory(matId);
+        if (have < reqQty) {
+          allMatsReady = false;
+          missingMats.push({ id: matId, name: GD.items[matId]?.name || matId, have, need: reqQty });
+        }
+      }
+
+      const hasGold = (self.gold || 0) >= nextRankCost.gold;
+      const hasLv = (self.lv || 1) >= nextRankCost.lv;
+
+      return {
+        skillId: skId,
+        skillName: skDef.name || skId,
+        curRank,
+        targetRank: curRank + 1,
+        gold: nextRankCost.gold,
+        lv: nextRankCost.lv,
+        hasGold,
+        hasLv,
+        missingMats,
+        allMatsReady: allMatsReady && hasGold && hasLv
+      };
+    }
+    return null;
+  }
+
+  function getGearEnhanceAnalysis(targetEnhanceLevel = 7) {
+    const self = window.GAME?.self;
+    const GD = window.GAME?.GD;
+    if (!self || !self.eq || !GD?.services?.enhance) return null;
+
+    const enhanceDef = GD.services.enhance;
+    const EQ_ORDER = ['weapon', 'helmet', 'armor', 'cape', 'ring'];
+
+    for (let i = 0; i < EQ_ORDER.length; i++) {
+      const slot = EQ_ORDER[i];
+      const item = self.eq[slot];
+      if (!item || !item.id) continue;
+
+      const curE = item.e || 0;
+      if (curE >= targetEnhanceLevel) continue;
+
+      const iDef = GD.items[item.id] || {};
+      const lv = iDef.lv || 1;
+
+      // Xác định Tier dựa theo tierLv: [1, 5, 10, 20, 30, 40, 46]
+      let tierIdx = 0;
+      for (let t = enhanceDef.tierLv.length - 1; t >= 0; t--) {
+        if (lv >= enhanceDef.tierLv[t]) { tierIdx = t; break; }
+      }
+      const tierInfo = enhanceDef.tiers[tierIdx] || enhanceDef.tiers[0];
+      const isElite = curE >= (enhanceDef.eliteFrom || 8);
+      const reqMatId = isElite ? tierInfo.elite : tierInfo.mat;
+      const reqMatQty = enhanceDef.mats[curE] || 1;
+
+      const curMatCount = countItemInInventory(reqMatId);
+      const hasEnoughMat = curMatCount >= reqMatQty;
+      const costGold = Math.round(enhanceDef.goldK * Math.pow(curE + 1, enhanceDef.pow) * 10);
+      const hasGold = (self.gold || 0) >= costGold;
+
+      return {
+        slot,
+        gearIndex: -i - 1, // index for net.send enhance
+        itemId: item.id,
+        name: iDef.name || item.id,
+        curE,
+        targetE: targetEnhanceLevel,
+        reqMatId,
+        matName: GD.items[reqMatId]?.name || reqMatId,
+        reqMatQty,
+        curMatCount,
+        costGold,
+        hasGold,
+        hasEnoughMat,
+        readyToForge: hasEnoughMat && hasGold
+      };
+    }
+    return null;
+  }
+
+  function findNearestNpcFromList(list, fromZone) {
+    const local = list.find(n => n.zone === fromZone);
+    if (local) return { ...local, hops: 0 };
+
+    let best = null;
+    for (const n of list) {
+      const r = safeMapRoute(fromZone, n.zone);
+      if (r !== null) {
+        if (!best || r.length < best.hops) {
+          best = { ...n, hops: r.length, route: r };
+        }
+      }
+    }
+    return best;
+  }
+
+  function handleAutoUpgradeStep(me, now) {
+    const curZone = window.GAME?.world?.zone?.id;
+    if (!curZone) return false;
+
+    // 1. SĂN NHANH NGUYÊN LIỆU (QUICK MAT FARM)
+    if (cfg.farmMat && cfg.farmMat !== 'none') {
+      const mat = UPGRADE_MATS[cfg.farmMat];
+      if (mat) {
+        if (curZone !== mat.zone) {
+          const r = safeMapRoute(curZone, mat.zone);
+          if (r && r.length > 0) {
+            const p = r[0].portal;
+            const distP = Math.hypot(p.x - me.x, p.y - me.y);
+            if (distP <= 45 && now - lastZoneTransitionTime >= 2500) {
+              setSteeringVector(p.x - me.x, p.y - me.y);
+            } else {
+              const s = calculateDirectSteering(me, p.x, p.y);
+              setSteeringVector(s.dx, s.dy);
+            }
+            upgradeState.statusText = `🌾 Sang ${mat.zoneName} săn ${mat.name}...`;
+            if (statusTxt) statusTxt.textContent = upgradeState.statusText;
+            return true;
+          }
+        } else {
+          cfg.targetMob = mat.targetMob || mat.mobs[0];
+          const distCoords = Math.hypot(mat.coords[0] - me.x, mat.coords[1] - me.y);
+          if (distCoords > 240) {
+            const s = calculateDirectSteering(me, mat.coords[0], mat.coords[1]);
+            setSteeringVector(s.dx, s.dy);
+            upgradeState.statusText = `🌾 Đi tới bãi săn ${mat.name} (${Math.round(distCoords)}px)`;
+            if (statusTxt) statusTxt.textContent = upgradeState.statusText;
+            return true;
+          }
+        }
+      }
+    }
+
+    // 2. TỰ ĐỘNG NÂNG CẤP KỸ NĂNG (AUTO-SKILL UPGRADE)
+    if (cfg.autoSkillUpgrade) {
+      const skillAnalysis = getSkillUpgradeAnalysis();
+      if (skillAnalysis) {
+        if (!skillAnalysis.allMatsReady && skillAnalysis.missingMats.length > 0) {
+          const nextMissing = skillAnalysis.missingMats[0];
+          const matDef = UPGRADE_MATS[nextMissing.id];
+          if (matDef) {
+            if (curZone !== matDef.zone) {
+              const r = safeMapRoute(curZone, matDef.zone);
+              if (r && r.length > 0) {
+                const p = r[0].portal;
+                const distP = Math.hypot(p.x - me.x, p.y - me.y);
+                if (distP <= 45 && now - lastZoneTransitionTime >= 2500) {
+                  setSteeringVector(p.x - me.x, p.y - me.y);
+                } else {
+                  const s = calculateDirectSteering(me, p.x, p.y);
+                  setSteeringVector(s.dx, s.dy);
+                }
+                upgradeState.statusText = `🪶 [Kỹ Năng] Sang ${matDef.zoneName} săn ${nextMissing.name} (${nextMissing.have}/${nextMissing.need})...`;
+                if (statusTxt) statusTxt.textContent = upgradeState.statusText;
+                return true;
+              }
+            } else {
+              cfg.targetMob = matDef.targetMob || matDef.mobs[0];
+              const distC = Math.hypot(matDef.coords[0] - me.x, matDef.coords[1] - me.y);
+              if (distC > 240) {
+                const s = calculateDirectSteering(me, matDef.coords[0], matDef.coords[1]);
+                setSteeringVector(s.dx, s.dy);
+                upgradeState.statusText = `🪶 Săn ${nextMissing.name} (${nextMissing.have}/${nextMissing.need}) tại ${matDef.zoneName}`;
+                if (statusTxt) statusTxt.textContent = upgradeState.statusText;
+                return true;
+              }
+            }
+          }
+        } else if (skillAnalysis.allMatsReady) {
+          const nearestTrainer = findNearestNpcFromList(TRAINER_LIST, curZone);
+          if (nearestTrainer) {
+            if (curZone !== nearestTrainer.zone) {
+              const r = safeMapRoute(curZone, nearestTrainer.zone);
+              if (r && r.length > 0) {
+                const p = r[0].portal;
+                const distP = Math.hypot(p.x - me.x, p.y - me.y);
+                if (distP <= 45 && now - lastZoneTransitionTime >= 2500) {
+                  setSteeringVector(p.x - me.x, p.y - me.y);
+                } else {
+                  const s = calculateDirectSteering(me, p.x, p.y);
+                  setSteeringVector(s.dx, s.dy);
+                }
+                upgradeState.statusText = `🎓 Đủ đồ! Đi gặp ${nearestTrainer.name} (${nearestTrainer.zone}) nâng Skill...`;
+                if (statusTxt) statusTxt.textContent = upgradeState.statusText;
+                return true;
+              }
+            } else {
+              const distNpc = Math.hypot(nearestTrainer.x - me.x, nearestTrainer.y - me.y);
+              if (distNpc <= 85) {
+                stopMoving();
+                if (now - upgradeState.lastActionTime >= 1500) {
+                  upgradeState.lastActionTime = now;
+                  window.GAME.net.send({ t: 'npc', s: nearestTrainer.id });
+                  setTimeout(() => {
+                    window.GAME.net.send({ t: 'rank', s: nearestTrainer.id, m: skillAnalysis.skillId });
+                    logShopEvent(`🎉 Đã gửi lệnh nâng cấp [${skillAnalysis.skillName}] lên Bậc ${skillAnalysis.targetRank} với ${nearestTrainer.name}!`);
+                  }, 400);
+                }
+                upgradeState.statusText = `🎓 Đang nâng cấp [${skillAnalysis.skillName}] Bậc ${skillAnalysis.targetRank}...`;
+                if (statusTxt) statusTxt.textContent = upgradeState.statusText;
+                return true;
+              } else {
+                const s = calculateDirectSteering(me, nearestTrainer.x, nearestTrainer.y);
+                setSteeringVector(s.dx, s.dy);
+                upgradeState.statusText = `🎓 Tới gặp ${nearestTrainer.name} (${Math.round(distNpc)}px)`;
+                if (statusTxt) statusTxt.textContent = upgradeState.statusText;
+                return true;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // 3. TỰ ĐỘNG CƯỜNG HÓA TRANG BỊ (AUTO-GEAR ENHANCE)
+    if (cfg.autoGearEnhance) {
+      const gearAnalysis = getGearEnhanceAnalysis(cfg.enhanceTargetLevel || 7);
+      if (gearAnalysis) {
+        const minBatch = 5;
+        if (gearAnalysis.curMatCount < Math.min(minBatch, gearAnalysis.reqMatQty)) {
+          const matDef = UPGRADE_MATS[gearAnalysis.reqMatId];
+          if (matDef) {
+            if (curZone !== matDef.zone) {
+              const r = safeMapRoute(curZone, matDef.zone);
+              if (r && r.length > 0) {
+                const p = r[0].portal;
+                const distP = Math.hypot(p.x - me.x, p.y - me.y);
+                if (distP <= 45 && now - lastZoneTransitionTime >= 2500) {
+                  setSteeringVector(p.x - me.x, p.y - me.y);
+                } else {
+                  const s = calculateDirectSteering(me, p.x, p.y);
+                  setSteeringVector(s.dx, s.dy);
+                }
+                upgradeState.statusText = `🔨 [Cường Hóa] Sang ${matDef.zoneName} săn ${gearAnalysis.matName} (${gearAnalysis.curMatCount}/${minBatch})...`;
+                if (statusTxt) statusTxt.textContent = upgradeState.statusText;
+                return true;
+              }
+            } else {
+              cfg.targetMob = matDef.targetMob || matDef.mobs[0];
+              const distC = Math.hypot(matDef.coords[0] - me.x, matDef.coords[1] - me.y);
+              if (distC > 240) {
+                const s = calculateDirectSteering(me, matDef.coords[0], matDef.coords[1]);
+                setSteeringVector(s.dx, s.dy);
+                upgradeState.statusText = `🔨 Săn ${gearAnalysis.matName} (${gearAnalysis.curMatCount}/${minBatch}) cho [${gearAnalysis.name}]`;
+                if (statusTxt) statusTxt.textContent = upgradeState.statusText;
+                return true;
+              }
+            }
+          }
+        } else if (gearAnalysis.readyToForge) {
+          const nearestSmith = findNearestNpcFromList(BLACKSMITH_LIST, curZone);
+          if (nearestSmith) {
+            if (curZone !== nearestSmith.zone) {
+              const r = safeMapRoute(curZone, nearestSmith.zone);
+              if (r && r.length > 0) {
+                const p = r[0].portal;
+                const distP = Math.hypot(p.x - me.x, p.y - me.y);
+                if (distP <= 45 && now - lastZoneTransitionTime >= 2500) {
+                  setSteeringVector(p.x - me.x, p.y - me.y);
+                } else {
+                  const s = calculateDirectSteering(me, p.x, p.y);
+                  setSteeringVector(s.dx, s.dy);
+                }
+                upgradeState.statusText = `⚒️ Đi gặp ${nearestSmith.name} (${nearestSmith.zone}) cường hóa đồ...`;
+                if (statusTxt) statusTxt.textContent = upgradeState.statusText;
+                return true;
+              }
+            } else {
+              const distSmith = Math.hypot(nearestSmith.x - me.x, nearestSmith.y - me.y);
+              if (distSmith <= 85) {
+                stopMoving();
+                if (now - upgradeState.lastActionTime >= 1600) {
+                  upgradeState.lastActionTime = now;
+                  window.GAME.net.send({ t: 'npc', s: nearestSmith.id });
+                  setTimeout(() => {
+                    const haveCharm = countItemInInventory('m_buahoren') > 0;
+                    const useCharm = gearAnalysis.curE >= 7 && haveCharm;
+                    const cmd = { t: 'enhance', s: nearestSmith.id, n: gearAnalysis.gearIndex };
+                    if (useCharm) cmd.m = '1';
+                    window.GAME.net.send(cmd);
+                    logShopEvent(`⚒️ Đã gửi lệnh cường hóa [${gearAnalysis.name}] (${gearAnalysis.curE} -> +${gearAnalysis.curE + 1}) với ${nearestSmith.name}!`);
+                  }, 400);
+                }
+                upgradeState.statusText = `⚒️ Đang cường hóa [${gearAnalysis.name}] +${gearAnalysis.curE + 1}...`;
+                if (statusTxt) statusTxt.textContent = upgradeState.statusText;
+                return true;
+              } else {
+                const s = calculateDirectSteering(me, nearestSmith.x, nearestSmith.y);
+                setSteeringVector(s.dx, s.dy);
+                upgradeState.statusText = `⚒️ Tới gặp ${nearestSmith.name} (${Math.round(distSmith)}px)`;
+                if (statusTxt) statusTxt.textContent = upgradeState.statusText;
+                return true;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return false;
+  }
+
   function logShopEvent(msg) {
     console.log('%c[AUTO-SHOP] ' + msg, 'color: #ff9800; font-weight: bold;');
     try {
@@ -3115,7 +3667,7 @@
       
       <!-- Top Telemetry Row -->
       <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 4px;">
-        <span id="sm-mini-status" style="font-weight: bold; color: #00e676; font-size: 11px;">🟢 v16.0.0</span>
+        <span id="sm-mini-status" style="font-weight: bold; color: #00e676; font-size: 11px;">🟢 v16.2.0</span>
         <span style="color: #ff5252;">❤️ <b id="sm-mini-hp">100%</b></span>
         <span style="color: #69f0ae;">🩸 <b id="sm-mini-pots">0</b></span>
         <span style="color: #ffd740;">💰 <b id="sm-mini-gold">0</b></span>
@@ -4473,7 +5025,7 @@
     // Xả kỹ năng: Khi bị vây khẩn cấp, kích hoạt Choáng diện rộng ngay lập tức!
     executeOracleAttack(targetMob, now, distToTarget, state.dMin, state.closestMob, state.pursuerCount, isPinnedAgainstWall, state.isPvP);
 
-    if (miniStatusEl) miniStatusEl.textContent = cfg.enabled ? '🟢 Bot v16.0.0' : '🔴 Tạm dừng';
+    if (miniStatusEl) miniStatusEl.textContent = cfg.enabled ? '🟢 Bot v16.2.0' : '🔴 Tạm dừng';
     if (miniAtkEl) miniAtkEl.textContent = devState.totalAttacks;
     if (miniBreakoutEl) miniBreakoutEl.textContent = devState.breakoutsTriggered;
     if (miniStateEl && statusTxt) miniStateEl.textContent = statusTxt.textContent;
@@ -4481,7 +5033,7 @@
 
 
   window._ancientMasterBot = {
-    version: '16.0.0',
+    version: '16.2.0',
     cfg,
     devState,
     skillTimers,
@@ -4506,10 +5058,10 @@
       if (origUiChatLine && window.GAME?.ui) window.GAME.ui.chatLine = origUiChatLine;
       if (origUiToggleChat && window.GAME?.ui) window.GAME.ui.toggleChat = origUiToggleChat;
       delete window._ancientMasterBot;
-      console.log("%c[BOT v16.0.0] Đã gỡ bỏ toàn bộ giao diện và tiến trình.", "color: #ff9800; font-weight: bold;");
+      console.log("%c[BOT v16.2.0] Đã gỡ bỏ toàn bộ giao diện và tiến trình.", "color: #ff9800; font-weight: bold;");
     }
   };
 
-    console.log("%c[BOT v16.0.0] KHỞI ĐỘNG THÀNH CÔNG: VUA NÉ CHIÊU BOSS & TRIỆT TIÊU GÓC CHẾT, CHỐNG KẸT ĐỊA HÌNH ĐỈNH CAO!", "color: #00e676; font-size: 14px; font-weight: bold;");
+    console.log("%c[BOT v16.2.0] KHỞI ĐỘNG THÀNH CÔNG: VUA NÂNG CẤP KỸ NĂNG & CƯỜNG HÓA TRANG BỊ, TỰ ĐỘNG SĂN NGUYÊN LIỆU ĐỈNH CAO!", "color: #00e676; font-size: 14px; font-weight: bold;");
   }
 })();
