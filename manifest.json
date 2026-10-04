@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Ancient Realm - Master Bot v16.0 (Vua Né Chiêu Boss & Triệt Tiêu Góc Chết)",
-  "version": "16.0.0",
-  "description": "Vua né chiêu Boss, triệt tiêu hoàn toàn góc chết, lực đẩy vật cản tĩnh chính xác, chống kẹt địa hình và khắc phục quái over tầm & 0 máu.",
+  "name": "Ancient Realm - Master Bot v16.1 (Vua Làm Nhiệm Vụ & Quét Quái Toàn Năng)",
+  "version": "16.1.0",
+  "description": "Vua làm nhiệm vụ NPC và quét quái toàn diện: sửa 100% drop mob scanning, thủ thành Defend, dùng điểm Use, hái lượm Gather Nodes và tuần tra chuyển bãi thông minh.",
   "author": "Antigravity",
   "icons": {
     "48": "icon48.png",

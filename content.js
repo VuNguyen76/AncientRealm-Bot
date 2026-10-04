@@ -1273,6 +1273,7 @@
         matchingMobs.sort((a, b) => Math.hypot(a.x - me.x, a.y - me.y) - Math.hypot(b.x - me.x, b.y - me.y));
         const newTarget = matchingMobs[0];
         currentTargetId = newTarget.id;
+        questState.emptySince = 0;
         if (window.GAME) {
           window.GAME.lockId = newTarget.id;
           window.GAME.targetId = newTarget.id;
@@ -1293,10 +1294,32 @@
       }
 
       // Quái đúng loại chưa xuất hiện: Tìm bãi spawn của quái đó và chạy thẳng đến bãi!
+      // Cơ chế CoViet Anchor Rotation: nếu bãi hiện tại trống > 6.5s thì tuần tra chuyển bãi khác
       const matchingSpawns = targetFilter.getMatchingSpawns(spawns);
       if (matchingSpawns.length > 0) {
-        matchingSpawns.sort((a, b) => Math.hypot(a.x - me.x, a.y - me.y) - Math.hypot(b.x - me.x, b.y - me.y));
-        const targetSpawn = matchingSpawns[0];
+        let targetSpawn = matchingSpawns[0];
+        if (targetFilter.type === 'quest') {
+          if (questState.anchorZone !== zoneId) {
+            questState.anchorZone = zoneId;
+            questState.anchorIdx = nearestIdx(matchingSpawns, me);
+            questState.emptySince = 0;
+          }
+          const curAnchor = matchingSpawns[questState.anchorIdx % matchingSpawns.length];
+          const dAnchor = Math.hypot(curAnchor.x - me.x, curAnchor.y - me.y);
+          if (dAnchor <= 90) {
+            if (!questState.emptySince) questState.emptySince = performance.now();
+            if (performance.now() - questState.emptySince > 6500 && matchingSpawns.length > 1) {
+              questState.anchorIdx = (questState.anchorIdx + 1) % matchingSpawns.length;
+              questState.emptySince = 0;
+              console.log('[AUTO-QUEST] Bãi quái quest trống lâu, tuần tra chuyển sang bãi index:', questState.anchorIdx);
+            }
+          }
+          targetSpawn = matchingSpawns[questState.anchorIdx % matchingSpawns.length];
+        } else {
+          matchingSpawns.sort((a, b) => Math.hypot(a.x - me.x, a.y - me.y) - Math.hypot(b.x - me.x, b.y - me.y));
+          targetSpawn = matchingSpawns[0];
+        }
+
         currentTargetId = null;
         return {
           target: null,
@@ -2093,19 +2116,41 @@
     targetMobs: null, // Set of mob kinds for current quest
     collectItem: null,
     lastTalkTime: 0,
+    lastUseTime: 0,
+    lastGatherTime: 0,
+    anchorIdx: 0,
+    emptySince: 0,
+    anchorZone: null,
     statusText: '',
     talkTries: 0
   };
 
+  function nearestIdx(spots, me) {
+    if (!spots || spots.length === 0) return 0;
+    return spots.reduce((b, s, i) => (Math.hypot(s.x - me.x, s.y - me.y) < Math.hypot(spots[b].x - me.x, spots[b].y - me.y) ? i : b), 0);
+  }
+
   function getActiveQuest() {
     const ui = window.GAME?.ui;
     const self = window.GAME?.self;
+    const list = self?.quests?.list || [];
+
+    // 1. Ưu tiên cao nhất: Nhiệm vụ đã hoàn thành mục tiêu, sẵn sàng trả (q.ready)
+    const readyQ = list.find(q => q && q.ready && !q.done);
+    if (readyQ) return readyQ;
+
+    // 2. Nhiệm vụ đang ghim trên bảng hướng dẫn màn hình game
     if (ui?.guideQuest) {
       const gq = ui.guideQuest();
       if (gq && !gq.done) return gq;
     }
-    const list = self?.quests?.list || [];
-    const active = list.find(q => !q.done);
+
+    // 3. Nhiệm vụ chính tuyến (ch1..ch9)
+    const mainQ = list.find(q => q && !q.done && /^ch\d+$/.test(q.id));
+    if (mainQ) return mainQ;
+
+    // 4. Bất kỳ nhiệm vụ nào chưa xong trong danh sách
+    const active = list.find(q => q && !q.done);
     if (active) return active;
     if (self?.quest && !self.quest.done) return self.quest;
     return null;
@@ -2118,15 +2163,21 @@
   function mobsDroppingItem(itemId) {
     const GD = window.GAME?.GD || {};
     const mobs = GD.mobs || {};
-    const loot = GD.loot || {};
-    const result = [];
-    for (const [mid, m] of Object.entries(mobs)) {
-      const l = loot[m.loot];
-      if (l && l.items && l.items.includes(itemId)) {
-        result.push(mid);
+    const tables = GD.loot?.tables || {};
+    const result = new Set();
+    for (const [lootId, table] of Object.entries(tables)) {
+      if (!table) continue;
+      const drops = table.drops || [];
+      const items = table.items || [];
+      if (drops.some(d => d.item === itemId) || items.includes(itemId)) {
+        for (const [mid, m] of Object.entries(mobs)) {
+          if (m.loot === lootId || mid === lootId) {
+            result.add(mid);
+          }
+        }
       }
     }
-    return result;
+    return Array.from(result);
   }
 
   function findZoneForMobs(mobList, preferZone) {
@@ -2211,9 +2262,9 @@
     const step = def?.steps?.[q.step];
     if (!step) return false;
 
-    // A. BƯỚC NÓI CHUYỆN HOẶC ĐÃ XONG ĐANG TRẢ NHIỆM VỤ (q.ready)
-    if (step.type === 'talk' || q.ready) {
-      // Khi đang đi gặp NPC: Tạm dừng chế độ săn quái quest để tập trung di chuyển mượt mà
+    // A. BƯỚC NÓI CHUYỆN HOẶC ĐÃ XONG ĐANG TRẢ NHIỆM VỤ (q.ready) HOẶC DỊCH VỤ NPC (barber, dye...)
+    const isServiceStep = ['barber', 'enhance', 'refine', 'dye', 'bless', 'reroll', 'craft', 'seal'].includes(step.type);
+    if (step.type === 'talk' || q.ready || isServiceStep) {
       questState.active = false;
       questState.targetMobs = null;
       questState.collectItem = null;
@@ -2231,7 +2282,7 @@
               const s = calculateDirectSteering(me, p.x, p.y);
               setSteeringVector(s.dx, s.dy);
             }
-            questState.statusText = `📜 Đi sang ${npcLoc.zone} trả quest...`;
+            questState.statusText = `📜 Đi sang ${npcLoc.zone} gặp ${npcLoc.name || targetNpcId}...`;
             if (statusTxt) statusTxt.textContent = questState.statusText;
             return true;
           }
@@ -2244,10 +2295,10 @@
               window.GAME.net.send({ t: 'npc', s: targetNpcId });
               setTimeout(() => {
                 window.GAME.net.send({ t: 'qa', s: targetNpcId, m: q.id });
-                logShopEvent(`✅ Đã trả nhiệm vụ [${def.name || q.id}] cho ${npcLoc.name || targetNpcId}!`);
+                logShopEvent(`✅ Đã giao tiếp nhiệm vụ [${def.name || q.id}] với ${npcLoc.name || targetNpcId}!`);
               }, 400);
             }
-            questState.statusText = `📜 Đang trả nhiệm vụ cho ${npcLoc.name || targetNpcId}...`;
+            questState.statusText = `📜 Đang giao tiếp với ${npcLoc.name || targetNpcId}...`;
             if (statusTxt) statusTxt.textContent = questState.statusText;
             return true;
           } else {
@@ -2262,18 +2313,174 @@
       return false;
     }
 
-    // B. BƯỚC GIẾT QUÁI (kill) HOẶC THU THẬP VẬT PHẨM (collect)
+    // B. BƯỚC GIỮ TRẬN / THỦ THÀNH (defend)
+    if (step.type === 'defend') {
+      const defendHud = document.getElementById('defend-hud');
+      const isDefendActive = defendHud && !defendHud.hidden;
+      const targetZone = step.zone || q.zone || curZone;
+
+      if (curZone !== targetZone) {
+        const r = safeMapRoute(curZone, targetZone);
+        if (r && r.length > 0) {
+          const p = r[0].portal;
+          const distP = Math.hypot(p.x - me.x, p.y - me.y);
+          if (distP <= 45 && now - lastZoneTransitionTime >= 2500) {
+            setSteeringVector(p.x - me.x, p.y - me.y);
+          } else {
+            const s = calculateDirectSteering(me, p.x, p.y);
+            setSteeringVector(s.dx, s.dy);
+          }
+          questState.statusText = `📜 Sang ${targetZone} giữ trận...`;
+          if (statusTxt) statusTxt.textContent = questState.statusText;
+          return true;
+        }
+      }
+
+      // Đã ở đúng zone giữ trận
+      const waveMobs = (step.waves || []).map(w => w.mob);
+      questState.active = true;
+      questState.targetMobs = new Set(waveMobs.length > 0 ? waveMobs : ['ambinh', 'dieugiay']);
+      questState.collectItem = null;
+
+      if (!isDefendActive) {
+        // Chưa kích hoạt giữ trận: Tới NPC nói chuyện để bắt đầu!
+        const targetNpcId = step.npc || q.npc;
+        const npcLoc = findNpcZoneAndLocation(targetNpcId) || { x: step.x, y: step.y, name: targetNpcId };
+        const distNpc = Math.hypot(npcLoc.x - me.x, npcLoc.y - me.y);
+        if (distNpc <= 110) {
+          stopMoving();
+          if (now - questState.lastTalkTime >= 1500) {
+            questState.lastTalkTime = now;
+            window.GAME.net.send({ t: 'npc', s: targetNpcId });
+            setTimeout(() => {
+              window.GAME.net.send({ t: 'qa', s: targetNpcId, m: q.id });
+            }, 400);
+          }
+          questState.statusText = `🛡️ Bắt đầu giữ trận cùng ${npcLoc.name || targetNpcId}...`;
+          if (statusTxt) statusTxt.textContent = questState.statusText;
+          return true;
+        } else {
+          const s = calculateDirectSteering(me, npcLoc.x, npcLoc.y);
+          setSteeringVector(s.dx, s.dy);
+          questState.statusText = `🛡️ Tới gặp ${npcLoc.name || targetNpcId} (${Math.round(distNpc)}px)`;
+          if (statusTxt) statusTxt.textContent = questState.statusText;
+          return true;
+        }
+      } else {
+        // Đang trong trận thủ thành: Giữ vị trí trong vòng (step.x, step.y, step.r)
+        const centerX = step.x, centerY = step.y, radius = step.r || 200;
+        const distCenter = Math.hypot(centerX - me.x, centerY - me.y);
+        if (distCenter > radius * 0.75) {
+          const s = calculateDirectSteering(me, centerX, centerY);
+          setSteeringVector(s.dx, s.dy);
+          questState.statusText = `🛡️ Giữ vòng trận (${Math.round(distCenter)}px) - ${defendHud?.textContent || 'Đang thủ'}`;
+          if (statusTxt) statusTxt.textContent = questState.statusText;
+          return true;
+        } else {
+          // Đã ở trong vòng an toàn: Nhường cho combat loop diệt quái âm binh!
+          questState.statusText = `🛡️ Dẹp âm binh thủ trận (${waveMobs.join('/')})`;
+          return false;
+        }
+      }
+    }
+
+    // C. BƯỚC DÙNG VẬT PHẨM TẠI ĐIỂM (use)
+    if (step.type === 'use') {
+      const targetZone = step.zone || q.zone || curZone;
+      if (curZone !== targetZone) {
+        const r = safeMapRoute(curZone, targetZone);
+        if (r && r.length > 0) {
+          const p = r[0].portal;
+          const distP = Math.hypot(p.x - me.x, p.y - me.y);
+          if (distP <= 45 && now - lastZoneTransitionTime >= 2500) {
+            setSteeringVector(p.x - me.x, p.y - me.y);
+          } else {
+            const s = calculateDirectSteering(me, p.x, p.y);
+            setSteeringVector(s.dx, s.dy);
+          }
+          questState.statusText = `📜 Sang ${targetZone} dùng đồ quest...`;
+          if (statusTxt) statusTxt.textContent = questState.statusText;
+          return true;
+        }
+      }
+
+      // Tìm điểm cần dùng gần nhất
+      const pts = (q.pts && q.pts.length > 0) ? q.pts : (step.points || (step.x && step.y ? [[step.x, step.y]] : []));
+      if (pts.length > 0) {
+        pts.sort((a, b) => Math.hypot(a[0] - me.x, a[1] - me.y) - Math.hypot(b[0] - me.x, b[1] - me.y));
+        const nearestPt = pts[0];
+        const pRadius = step.r || q.r || 85;
+        const distPt = Math.hypot(nearestPt[0] - me.x, nearestPt[1] - me.y);
+        if (distPt <= pRadius) {
+          stopMoving();
+          if (now - (questState.lastUseTime || 0) >= 1200) {
+            questState.lastUseTime = now;
+            window.GAME.net.send({ t: 'qu', m: q.id });
+            logShopEvent(`✋ Đã bấm dùng vật phẩm quest [${q.name || q.id}]!`);
+          }
+          questState.statusText = `✋ Đang dùng vật phẩm tại điểm quest...`;
+          if (statusTxt) statusTxt.textContent = questState.statusText;
+          return true;
+        } else {
+          const s = calculateDirectSteering(me, nearestPt[0], nearestPt[1]);
+          setSteeringVector(s.dx, s.dy);
+          questState.statusText = `📜 Đi tới điểm dùng quest (${Math.round(distPt)}px)`;
+          if (statusTxt) statusTxt.textContent = questState.statusText;
+          return true;
+        }
+      }
+    }
+
+    // D. BƯỚC GIẾT QUÁI (kill) HOẶC THU THẬP VẬT PHẨM (collect)
     if (step.type === 'kill' || step.type === 'collect') {
-      const mobList = step.type === 'kill' 
-        ? (step.mobs || (step.mob ? [step.mob] : []))
-        : (mobsDroppingItem(step.item) || (step.mob ? [step.mob] : []));
-      
+      let mobList = [];
+      if (step.type === 'kill') {
+        mobList = step.distinct 
+          ? (step.mobs || []).filter(id => !q.got?.includes(id))
+          : (step.mobs || (step.mob ? [step.mob] : []));
+      } else {
+        mobList = mobsDroppingItem(step.item);
+        if (step.mob && !mobList.includes(step.mob)) mobList.push(step.mob);
+      }
+
+      // Kiểm tra điểm hái lượm / rương yêu cho collect
+      if (step.type === 'collect') {
+        const GD = window.GAME?.GD || {};
+        const tabs = Object.entries(GD.loot?.tables || {})
+          .filter(([, t]) => (t.drops || []).some(d => d.item === step.item) || (t.items || []).includes(step.item))
+          .map(([id]) => id);
+        const chestHere = tabs.includes(window.GAME?.world?.zone?.chests?.loot);
+        const gatherList = (window.GAME?.gather || []).filter(g => g[4] && (g[1] === step.item || (g[1] === 'chest' && chestHere)));
+        if (gatherList.length > 0) {
+          gatherList.sort((a, b) => Math.hypot(a[2] - me.x, a[3] - me.y) - Math.hypot(b[2] - me.x, b[3] - me.y));
+          const nearestNode = gatherList[0];
+          const distNode = Math.hypot(nearestNode[2] - me.x, nearestNode[3] - me.y);
+          if (distNode <= 45) {
+            stopMoving();
+            if (now - (questState.lastGatherTime || 0) >= 1200) {
+              questState.lastGatherTime = now;
+              window.GAME.net.send({ t: 'gather', id: nearestNode[0] });
+              logShopEvent(`🌿 Thu hoạch điểm quest [${nearestNode[1]}]!`);
+            }
+            questState.statusText = `🌿 Đang thu hoạch ${step.item}...`;
+            if (statusTxt) statusTxt.textContent = questState.statusText;
+            return true;
+          } else {
+            const s = calculateDirectSteering(me, nearestNode[2], nearestNode[3]);
+            setSteeringVector(s.dx, s.dy);
+            questState.statusText = `🌿 Tới điểm thu hoạch (${Math.round(distNode)}px)`;
+            if (statusTxt) statusTxt.textContent = questState.statusText;
+            return true;
+          }
+        }
+      }
+
       if (mobList.length > 0) {
         questState.active = true;
         questState.targetMobs = new Set(mobList);
         questState.collectItem = (step.type === 'collect') ? step.item : null;
 
-        const targetZone = findZoneForMobs(mobList, curZone);
+        const targetZone = step.zone || q.zone || findZoneForMobs(mobList, curZone);
         if (targetZone && targetZone !== curZone) {
           const r = safeMapRoute(curZone, targetZone);
           if (r && r.length > 0) {
@@ -2290,7 +2497,7 @@
             return true;
           }
         } else {
-          // Đã ở đúng map có bãi quái quest: Nhường hoàn toàn quyền điều khiển cho combat loop!
+          // Đã ở đúng map: Nhường hoàn toàn quyền điều khiển cho combat loop!
           // Combat loop sẽ dùng getActiveTargetFilter() để tự động khóa đúng quái quest
           questState.statusText = `⚔️ Săn quái nhiệm vụ: ${mobList.join('/')}`;
           return false;
@@ -2299,10 +2506,11 @@
       return false;
     }
 
-    // C. BƯỚC TỚI NƠI (reach)
+    // E. BƯỚC TỚI NƠI (reach)
     if (step.type === 'reach') {
-      if (step.zone && curZone !== step.zone) {
-        const r = safeMapRoute(curZone, step.zone);
+      const targetZone = step.zone || q.zone;
+      if (targetZone && curZone !== targetZone) {
+        const r = safeMapRoute(curZone, targetZone);
         if (r && r.length > 0) {
           const p = r[0].portal;
           const distP = Math.hypot(p.x - me.x, p.y - me.y);
@@ -2312,7 +2520,7 @@
             const s = calculateDirectSteering(me, p.x, p.y);
             setSteeringVector(s.dx, s.dy);
           }
-          questState.statusText = `📜 Tới map ${step.zone}...`;
+          questState.statusText = `📜 Tới map ${targetZone}...`;
           if (statusTxt) statusTxt.textContent = questState.statusText;
           return true;
         }
@@ -3877,7 +4085,21 @@
       if (elQGoal) elQGoal.textContent = qStep?.title || qStep?.type || 'Làm nhiệm vụ';
       if (elQProg) elQProg.textContent = `${activeQ.have ?? 0}/${activeQ.need || qStep?.n || 1}`;
       if (elQStep) {
-        elQStep.textContent = activeQ.ready ? 'Gặp NPC trả nhiệm vụ' : (qStep?.type === 'talk' ? 'Nói chuyện NPC' : (qStep?.type === 'kill' ? 'Diệt quái: ' + (qStep.mob || 'quái') : (qStep?.type === 'collect' ? 'Nhặt đồ quái rơi' : 'Đi tới nơi')));
+        if (activeQ.ready) {
+          elQStep.textContent = 'Gặp NPC trả nhiệm vụ';
+        } else if (qStep?.type === 'talk') {
+          elQStep.textContent = 'Nói chuyện NPC';
+        } else if (qStep?.type === 'defend') {
+          elQStep.textContent = 'Thủ thành / Giữ trận (' + ((qStep.waves || []).map(w => w.mob).join('/') || 'âm binh') + ')';
+        } else if (qStep?.type === 'use') {
+          elQStep.textContent = 'Dùng vật phẩm tại điểm';
+        } else if (qStep?.type === 'kill') {
+          elQStep.textContent = 'Diệt quái: ' + (qStep.mobs?.join('/') || qStep.mob || 'quái');
+        } else if (qStep?.type === 'collect') {
+          elQStep.textContent = 'Thu thập: ' + (qStep.item || 'vật phẩm');
+        } else {
+          elQStep.textContent = 'Đi tới điểm nhiệm vụ';
+        }
       }
     } else if (elQTitle) {
       elQTitle.textContent = 'Không có nhiệm vụ';
@@ -4007,10 +4229,18 @@
     }
 
     if (state.navigatingSpawn && !state.target) {
-      // CoViet targetWithin check: nếu có bất kỳ quái sống nào trong tầm, ưu tiên xả chiêu & đánh ngay!
+      // CoViet targetWithin check: nếu có quái hợp lệ trong tầm, ưu tiên xả chiêu & đánh ngay!
       const roleInfo = getCharacterRoleInfo();
       const allActiveMobs = window.GAME?.mobs ? Array.from(window.GAME.mobs.values()).filter(m => isMobValidAndAlive(m)) : [];
-      const mobInRange = allActiveMobs.find(m => Math.hypot(m.x - me.x, m.y - me.y) <= roleInfo.baseRange + 50);
+      const targetFilter = getActiveTargetFilter();
+      const mobInRange = allActiveMobs.find(m => {
+        const d = Math.hypot(m.x - me.x, m.y - me.y);
+        if (d > roleInfo.baseRange + 50) return false;
+        if (state.isQuestTarget && targetFilter) {
+          return targetFilter.matches(m.kind, getMobDef(m)?.id) || (m.tgt === me.id && state.pursuers?.includes(m));
+        }
+        return true;
+      });
       if (mobInRange) {
         currentTargetId = mobInRange.id;
         if (window.GAME) {
@@ -4043,7 +4273,15 @@
       // CoViet targetWithin fallback: nếu mất target nhưng có quái sống trong tầm, không bao giờ đứng chôn chân
       const roleInfo = getCharacterRoleInfo();
       const allActiveMobs = window.GAME?.mobs ? Array.from(window.GAME.mobs.values()).filter(m => isMobValidAndAlive(m)) : [];
-      const mobInRange = allActiveMobs.find(m => Math.hypot(m.x - me.x, m.y - me.y) <= roleInfo.baseRange + 50);
+      const targetFilter = getActiveTargetFilter();
+      const mobInRange = allActiveMobs.find(m => {
+        const d = Math.hypot(m.x - me.x, m.y - me.y);
+        if (d > roleInfo.baseRange + 50) return false;
+        if (state.isQuestTarget && targetFilter) {
+          return targetFilter.matches(m.kind, getMobDef(m)?.id) || (m.tgt === me.id && state.pursuers?.includes(m));
+        }
+        return true;
+      });
       if (mobInRange) {
         currentTargetId = mobInRange.id;
         if (window.GAME) {

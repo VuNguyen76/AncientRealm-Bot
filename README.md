@@ -1,42 +1,41 @@
-# Ancient Realm - Master Bot v16.0 (Vua Né Chiêu Boss & Triệt Tiêu Góc Chết, Chống Kẹt Địa Hình Đỉnh Cao)
+# Ancient Realm - Master Bot v16.1 (Vua Làm Nhiệm Vụ & Quét Quái Toàn Năng, Auto-Quest Engine Master)
 
-## 🌟 Cải Tiến Đột Phá Trong Bản v16.0.0 (King of Dodging & Pathing)
+## 🌟 Đột Phá Toàn Diện Trong Bản v16.1.0 (Auto-Quest & Mob Scanning Revolution)
 
-### 1. 🛡️ Triệt Tiêu Hoàn Toàn "Góc Chết" Khi Né Chiêu Boss (Dead-Corner Elimination):
-- **Phát hiện và xử lý chuẩn xác 3 hình học Collider của Server**:
-  * Tròn (`t: 'c'`): Cây cối, tảng đá.
-  * Hộp chữ nhật (`t: 'b'`): Hàng rào, tường thành, bờ dậu nhà.
-  * Elip (`t: 'e'`): Bờ hồ nước, ao sen.
-- **Sửa triệt để bug `c[0]` gây `NaN`**: Khôi phục 100% lực đẩy từ vật cản tĩnh (`Obstacle Repulsion`), giải quyết tận gốc nguyên nhân khiến bot đứng im chôn chân trước gốc cây hoặc vách đá.
-- **Thuật toán quét 8 hướng loại bỏ góc kẹt (`countBlockedDirections`)**:
-  * Thử nghiệm 8 hướng tỏa ra 70px xung quanh điểm né dự kiến. Nếu có $\ge 3$ hướng bị chặn bởi vật cản hoặc mép bản đồ $\rightarrow$ **LOẠI BỎ NGAY LẬP TỨC VÌ ĐÓ LÀ GÓC CHẾT / HẺM CỤT**!
-  * Tuyệt đối không bao giờ chui vào ngõ cụt, góc tường hay khe giữa hai gốc cây để bị Boss ép góc xả combo.
-- **Tia quét kiểm tra trực tiếp (`isPathClear`)**: Đảm bảo từ vị trí hiện tại đến điểm an toàn có đường đi thẳng thông thoáng 100% không cắt góc qua bất kỳ vật cản nào.
+### 1. ⚔️ Khắc Phục Triệt Để 100% Lỗi Quét Quái Rơi Đồ (`mobsDroppingItem`):
+- **Phân tích chuẩn xác cấu trúc Loot Table của Server**:
+  * Chuyển đổi hoàn toàn sang bóc tách `GD.loot.tables` và mảng `drops: [{ item, p, quest }]`.
+  * Hỗ trợ chuẩn xác 100% tất cả hơn 35 nhiệm vụ thu thập vật phẩm (`collect`) như Nanh Heo Rừng (`q_nanhlon`), Vây Cá Lóc (`q_vaycaloc`), Vảy Giao Long (`q_vaygiaolong`), Hàng Chợ Đêm (`q_hangcho`), v.v.
+  * Bot tự động nhận diện đúng bầy quái chứa bảng loot rớt vật phẩm nhiệm vụ và ưu tiên nhặt đồ rơi của nhiệm vụ ngay khi rớt xuống đất!
 
 ---
 
-### 2. ⚡ Quyền Ưu Tiên Tuyệt Đối Khi Né Chiêu (Absolute Priority Hazard Dodge):
-- **Học tập trực tiếp kiến trúc CoViet (`dodge.js` & `move.js` override)**:
-  * Khi đứng trong vùng cảnh báo đỏ của Boss (`circle`, `ring`, `cone`, `line`), bot lập tức gán trạng thái né chiêu với quyền ưu tiên cao nhất.
-  * **Chống ngắt quãng do mất mục tiêu**: Khắc phục lỗi khi Boss bay/nhảy khiến target tạm mất làm gọi `stopMoving()` giữa chừng. Bot kiên quyết chạy thoát ra điểm an toàn cho đến khi hoàn toàn rời khỏi vùng nguy hiểm.
-  * Duy trì xả chiêu từ xa trong lúc lùi né, đảm bảo DPS không bị gián đoạn.
+### 2. 🛡️ Hỗ Trợ Trọn Vẹn Tất Cả Các Dạng Nhiệm Vụ Khó (`defend`, `use`, `distinct`, `nodes`):
+- **Nhiệm vụ Giữ Trận / Thủ Thành (`defend`)**:
+  * Tự động tới gặp NPC (Lê Chân, Thần Long Đỗ...) để kích hoạt trận chiến.
+  * Giữ vững vị trí trong vòng tròn an toàn (`step.r`), tự động kích hoạt chế độ diệt âm binh theo từng đợt sóng (`step.waves`).
+- **Nhiệm vụ Dùng Vật Phẩm Tại Điểm (`use`)**:
+  * Tự động điều hướng tuần tự qua các tọa độ chỉ định (`q.pts`) như thả Đèn Trôi Sông (`s7_mada`), Nhổ Cọc Long Đỗ (`ch9_step11`) và gửi gói tin `{ t: 'qu' }` chuẩn xác.
+- **Nhiệm vụ Tướng Luân Phiên (`distinct: true`)**:
+  * Tự động lọc bỏ các tướng đã đánh bại (`q.got`), chỉ săn các tướng cờ yểm còn lại (`s8_12coyem`).
+- **Nhiệm vụ Hái Lượm / Thu Thập Tài Nguyên (`gatherNodes` & `chests`)**:
+  * Quét vị trí cây thuốc, bụi hoa nhuộm (`q_hoanhuom`), bông lau (`q_bonglau`), rương yêu (`chest`) từ `window.GAME.gather` và tự động hái lượm.
 
 ---
 
-### 3. 🏃 Động Cơ Thả Diều 16 Tia 360 Độ Kháng Vật Cản & Rìa Map:
-- **Lực đẩy vật cản tĩnh + mép bản đồ (`World Boundaries Repulsion`)**: Khi lùi cách rìa map $< 120px$ hoặc gần cây $< 95px$, lực đẩy ngược ra bãi trống tự động tăng vọt.
-- **16 tia Conga-Line**: Quét trọn vẹn 360 độ, phạt 600 điểm nếu tia hướng vào ngõ cụt và cộng 100 điểm cho các bãi đất trống cực thoáng.
+### 3. 🧭 Cơ Chế Tuần Tra Đổi Bãi Thông Minh (CoViet Anchor Rotation):
+- **Chấm dứt hoàn toàn tình trạng kẹt bãi rỗng**:
+  * Nếu bãi quái hiện tại không có quái sinh trong vòng $> 6.5$ giây, bot sẽ tự động tuần tra chuyển sang bãi spawn tiếp theo của loài quái đó trên bản đồ.
+  * Ngay khi phát hiện quái mục tiêu xuất hiện, bot lập tức khóa mục tiêu và tiêu diệt ngay.
 
 ---
 
-### 4. 🎯 Kế Thừa Trọn Vẹn Tính Năng v15.9:
-- Xóa bỏ triệt để hiện tượng quái over tầm (Dead Zone elimination với `targetRadius`).
-- Quét sạch 100% quái 0 máu / 1 máu, giải phóng target tức thì với `{ t: 'tg', id: 0 }`.
-- Cơ chế chuyên trị Boss với kiting cự ly vàng ngoài tầm chém 130px và dọn dẹp đệ tử.
+### 4. 🎯 Khắc Phục Hiện Tượng Giật Cục / Thrashing Mục Tiêu:
+- Khi đang di chuyển tới bãi quái quest, bot duy trì sự tập trung tuyệt đối vào quái nhiệm vụ, chỉ đánh trả quái khác khi chúng chủ động áp sát tấn công mình.
 
 ---
 
 ### 5. 📦 Tải Về & Cài Đặt:
-- **Android APK**: `AncientRealm_Auto_v16_0.apk`
-- **Tampermonkey Userscript**: `AncientRealm_Master_Bot_v16_0.user.js`
-- **Chrome Extension**: `AncientRealm_Bot_Plugin_v16_0.zip`
+- **Android APK**: `AncientRealm_Auto_v16_1.apk`
+- **Tampermonkey Userscript**: `AncientRealm_Master_Bot_v16_1.user.js`
+- **Chrome Extension**: `AncientRealm_Bot_Plugin_v16_1.zip`
