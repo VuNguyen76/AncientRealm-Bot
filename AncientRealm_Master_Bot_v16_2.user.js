@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Ancient Realm - Master Bot v16.2 (Vua Nâng Cấp Kỹ Năng & Cường Hóa Trang Bị, Tự Động Săn Nguyên Liệu & Khắc Phục Kẹt Q Sông Bạch Đằng)
+// @name         Ancient Realm - Master Bot v16.3 (Master Kiting & Boss Hunter: Né 3 Hướng Câu Boss Trong Tầm, Tự Vệ Làm Q & Săn 14 Boss Thần Thoại)
 // @namespace    http://tampermonkey.net/
-// @version      16.2.0
-// @description  Đột phá v16.2: Tự động cày nguyên liệu & nâng cấp kỹ năng Bậc 2/3 (Ngọc Trai, Lông Đại Bàng, Mảnh Đồng), tự động cày nguyên liệu & cường hóa trang bị (+3, +5, +7), menu săn nhanh nguyên liệu toàn cõi Cổ Giới, bảo vệ 100% nguyên liệu quý không bị bán nhầm, khắc phục triệt để lỗi kẹt nhiệm vụ Sông Bạch Đằng (Ma Da q_dentroi) & thêm nút Bỏ Qua Quest chống kẹt vĩnh viễn.
+// @version      16.3.0
+// @description  Đột phá v16.3: Thả diều né 3 hướng (Lùi, Trái, Phải quanh quái) giữ trọn cự ly vàng Sweet Spot không bao giờ over tầm, Tự vệ phản công khi đang làm nhiệm vụ bị quái bu cắn lén, Menu Săn 14 Boss Thần Thoại & Yêu Rương (Hồn Cao Biền rơi 35% Thần Khí tb, Thiên Cẩu 1.11M HP, Yêu Rương T7 & Bùa Hộ Rèn), khám phá trọn vẹn 101 Nhiệm vụ & cơ chế khảm Ấn Chú.
 // @author       Antigravity
 // @match        *://ancientrealm.online/*
 // @match        *://*.ancientrealm.online/*
@@ -10,7 +10,7 @@
 // @grant        none
 // ==/UserScript==
 
-// AncientRealm Online - Master Bot v16.2.0 (Vua Nâng Cấp Kỹ Năng & Cường Hóa Trang Bị, Tự Động Săn Nguyên Liệu & Khắc Phục Kẹt Q Sông Bạch Đằng)
+// AncientRealm Online - Master Bot v16.3.0 (Master Kiting & Boss Hunter: Né 3 Hướng Câu Boss Trong Tầm, Tự Vệ Làm Q & Săn 14 Boss Thần Thoại)
 // KẾ THỪA & NÂNG CẤP TOÀN DIỆN TỪ KIẾN TRÚC COVIET (D:\coviet-4\coviet):
 // 1. TRIỆT TIÊU TẬN GỐC HIỆN TƯỢNG ĐỨNG IM CHÔN CHÂN (FREEZE / DEAD MOB POISONING):
 //    - Xóa bỏ vĩnh viễn bộ nhớ đệm độc hại deadMobIds. Chuẩn hóa cờ sống chết theo CoViet sync.js: !(m.st & 1) && m.hp > 0.
@@ -473,7 +473,11 @@
     lastMeasuredMobKind: '',
     totalTrashSold: 0,
     totalPotionsBought: 0,
-    goldEarnedFromShop: 0
+    goldEarnedFromShop: 0,
+    retaliationTargetId: null,
+    selfDefenseCount: 0,
+    orbitReversals: 0,
+    bossHunterTarget: null
   };
 
   let movementState = 'STAND';
@@ -933,7 +937,7 @@
   // ==========================================
   // THUẬT TOÁN ĐIỀU HƯỚNG CONGA-LINE + ĐẨY LÙI VẬT CẢN (OBSTACLE REPULSION) + 16 TIA 360 ĐỘ
   // ==========================================
-  function computeCongaKiteVector(me, pursuers, spawnCenter, isBoss) {
+  function computeCongaKiteVector(me, pursuers, spawnCenter, isBoss, targetMob) {
     let repX = 0, repY = 0;
 
     // 1. Lực đẩy từ quái (Mob Repulsion)
@@ -947,7 +951,6 @@
     }
 
     // 2. LỰC ĐẨY TỪ VẬT CẢN TĨNH (OBSTACLE REPULSION - CÂY, ĐÁ, VÁCH):
-    // Triệt tiêu nguy cơ bị dồn vào gốc cây / góc chết!
     const cols = window.GAME?.world?.cols || [];
     let obstacleNearCount = 0;
     for (const c of cols) {
@@ -955,7 +958,6 @@
       const distSurface = info.distSurface - 16;
       if (distSurface < 95) {
         obstacleNearCount++;
-        // Càng gần vật cản, lực đẩy ngược ra càng cực đại!
         const weight = 1 / Math.max(1, distSurface * distSurface);
         repX += info.dx * weight * 3500;
         repY += info.dy * weight * 3500;
@@ -991,8 +993,37 @@
       }
     }
 
-    // 4. QUÉT 16 TIA ĐA HƯỚNG TRỌN VẸN 360 ĐỘ:
-    // Đảm bảo dù hướng lùi chính bị vách đá cản, bot luôn tìm được khe hở thoát hiểm ra bãi trống!
+    // 4. BỘ ĐIỀU HƯỚNG 3 CUNG NÉ TRÁNH & GIỮ CỰ LY VÀNG (SWEET SPOT ORBIT & LEASH STUTTER-STEP):
+    // Cơ chế câu boss & quái trong tầm: Phân tích 3 hướng còn lại (Lùi, Rẽ Trái, Rẽ Phải quanh quái)
+    // Đảm bảo TUYỆT ĐỐI không bao giờ để quái bị over tầm hoặc văng ra khỏi tầm kỹ năng!
+    const roleInfo = getCharacterRoleInfo();
+    const isPlayerMelee = roleInfo.isMelee;
+    const actualMaxReach = roleInfo.baseRange + (isBoss ? 66 : 24);
+    const targetRef = targetMob || (pursuers.length > 0 ? pursuers[0] : null);
+
+    let normRevX = normRepX, normRevY = normRepY;
+    let normLeftX = -normRepY, normLeftY = normRepX;
+    let normRightX = normRepY, normRightY = -normRepX;
+
+    if (targetRef) {
+      const tdx = me.x - targetRef.x;
+      const tdy = me.y - targetRef.y;
+      const td = Math.hypot(tdx, tdy) || 1;
+      normRevX = tdx / td;
+      normRevY = tdy / td;
+      normLeftX = -normRevY;
+      normLeftY = normRevX;
+      normRightX = normRevY;
+      normRightY = -normRevX;
+    }
+
+    // Phạm vi cự ly vàng Sweet Spot:
+    // Đánh xa: Cự ly an toàn 150px - 260px (quái không với tới, nhưng trong tầm skill 300px)
+    // Cận chiến: 65px - 95px
+    const sweetMin = isPlayerMelee ? 60 : 150;
+    const sweetMax = isPlayerMelee ? 95 : Math.round(actualMaxReach * 0.88); // ~268px
+
+    // 5. QUÉT 16 TIA ĐA HƯỚNG TRỌN VẸN 360 ĐỘ:
     const numRays = 16;
     let bestVx = normRepX, bestVy = normRepY, bestScore = -Infinity;
     const zoneW = window.GAME?.world?.w || 3600;
@@ -1006,19 +1037,48 @@
 
       let score = probe.dist * 3.0; // Độ thoáng di chuyển
 
-      // Ưu tiên theo hướng đẩy lùi (cả quái và vật cản)
-      const dotRep = vx * normRepX + vy * normRepY;
-      score += dotRep * 60;
+      // Ưu tiên 3 HƯỚNG CÂU QUÁI AN TOÀN (Lùi, Rẽ Trái, Rẽ Phải quanh quái):
+      const dotRev = vx * normRevX + vy * normRevY;
+      const dotLeft = vx * normLeftX + vy * normLeftY;
+      const dotRight = vx * normRightX + vy * normRightY;
 
-      // Đánh giá khoảng cách với bầy quái sau khi bước thử
+      // Hướng lùi hoặc né sườn (quay 3 hướng còn lại) được cộng thưởng:
+      if (dotRev > 0.3) score += dotRev * 75;
+      if (dotLeft > 0.4) score += dotLeft * 70;
+      if (dotRight > 0.4) score += dotRight * 70;
+
+      // Phạt nặng nếu đâm đầu thẳng vào mặt quái khi đang kiting:
+      const dotForward = -(vx * normRevX + vy * normRevY);
+      if (dotForward > 0.6) score -= 400;
+
+      // Đánh giá khoảng cách với quái mục tiêu sau khi bước thử (GIỮ QUÁI TRONG TẦM):
       const nextX = me.x + vx * 50, nextY = me.y + vy * 50;
+
+      if (targetRef) {
+        const nextTargetDist = Math.hypot(nextX - targetRef.x, nextY - targetRef.y);
+
+        // KHẮC PHỤC TRIỆT ĐỂ LỖI QUÁI OVER TẦM / QUÁI 0 MÁU VĂNG KHỎI TẦM:
+        if (nextTargetDist > actualMaxReach * 0.94) {
+          // Phạt cực nặng nếu hướng đi làm quái văng ra khỏi tầm đánh!
+          const overDiff = nextTargetDist - (actualMaxReach * 0.94);
+          score -= 500 + overDiff * 6.0;
+        } else if (nextTargetDist < sweetMin) {
+          // Phạt nếu áp sát quá gần quái
+          score -= 300 + (sweetMin - nextTargetDist) * 3.5;
+        } else if (nextTargetDist >= sweetMin && nextTargetDist <= sweetMax) {
+          // ĐIỂM THƯỞNG CỰC ĐẠI: NẰM TRỌN TRONG CỰ LY VÀNG SWEET SPOT (CÂU BOSS TRONG TẦM)!
+          score += 350;
+        }
+      }
+
+      // Đánh giá khoảng cách với các quái bám đuôi khác:
       let minNextMobDist = Infinity;
       for (const m of pursuers) {
         const md = Math.hypot(nextX - m.x, nextY - m.y);
         if (md < minNextMobDist) minNextMobDist = md;
       }
-      if (minNextMobDist !== Infinity) {
-        score += minNextMobDist * 1.5;
+      if (minNextMobDist < 100) {
+        score -= (100 - minNextMobDist) * 3.0;
       }
 
       // Tránh mép bản đồ
@@ -1027,12 +1087,11 @@
       }
 
       // LOẠI TRỪ GÓC CHẾT (DEAD CORNER PENALTY):
-      // Nếu hướng này dẫn vào một hẻm cụt có từ 3 hướng bị chặn, phạt cực nặng!
       const blockedAtNext = countBlockedDirections(nextX, nextY, 65);
       if (blockedAtNext >= 3) {
-        score -= 600;
+        score -= 700;
       } else if (blockedAtNext === 0) {
-        score += 100; // Bãi đất trống cực thoáng
+        score += 120; // Bãi đất trống cực thoáng
       }
 
       if (score > bestScore) {
@@ -2157,7 +2216,7 @@
     if (!q || q.done) return false;
     if (questBlacklist.has(q.id)) return false;
 
-    // BỘ PHÁT HIỆN & BẢO VỆ NHIỆM VỤ THIẾU VẬT PHẨM (v16.2.0 - Fix lỗi kẹt Ma Da Bến Sông):
+    // BỘ PHÁT HIỆN & BẢO VỆ NHIỆM VỤ THIẾU VẬT PHẨM (v16.3.0 - Fix lỗi kẹt Ma Da Bến Sông):
     const def = getQuestDef(q.id);
     const step = def?.steps?.[q.step || 0];
     if (step && step.type === 'use') {
@@ -2245,6 +2304,35 @@
       const n = (z.npcs || []).find(x => x.id === npcId);
       if (n) return { ...n, zone: zid };
     }
+    return null;
+  }
+
+  // =========================================================================
+  // BỘ PHÁT HIỆN & TỰ VỆ PHẢN CÔNG KHI LÀM NHIỆM VỤ (v16.3.0)
+  // Khắc phục triệt để lỗi bị quái bu cắn lén mà không đánh trả khi đang làm Quest!
+  // =========================================================================
+  function findQuestSelfDefenseThreat(me) {
+    if (!me || !cfg.questSelfDefense) return null;
+    const myId = me.id;
+    const allMobs = (window.GAME?.world?.mobs || []).filter(m => isMobValidAndAlive(m));
+
+    // 1. Quái đang trực tiếp nhắm mục tiêu vào người chơi (Aggro Lock):
+    const directAttacker = allMobs.find(m => m.tgt === myId);
+    if (directAttacker) return directAttacker;
+
+    // 2. Người chơi bị mất máu và có quái bu trong bán kính áp sát gần (150px):
+    if (me.hp < me.maxHp) {
+      const nearbyThreat = allMobs.find(m => Math.hypot(m.x - me.x, m.y - me.y) <= 150);
+      if (nearbyThreat) return nearbyThreat;
+    }
+
+    // 3. Nếu trước đó đang đánh trả 1 con quái tự vệ mà nó chưa chết:
+    if (devState.retaliationTargetId) {
+      const prevAttacker = allMobs.find(m => m.id === devState.retaliationTargetId);
+      if (prevAttacker && isMobValidAndAlive(prevAttacker)) return prevAttacker;
+      devState.retaliationTargetId = null;
+    }
+
     return null;
   }
 
@@ -2584,8 +2672,191 @@
   }
 
   
+
   // =========================================================================
-  // BỘ TỰ ĐỘNG SĂN NGUYÊN LIỆU & NÂNG CẤP KỸ NĂNG, CƯỜNG HÓA TRANG BỊ (v16.2.0)
+  // BỘ DỮ LIỆU & ĐIỀU HƯỚNG SĂN 14 BOSS THẦN THOẠI & YÊU RƯƠNG (v16.3.0)
+  // Khám phá trọn vẹn toàn bộ Boss, Tọa độ, Cơ chế phá khiên & Drop Thần Khí 'tb'
+  // =========================================================================
+  const BOSS_DATABASE = {
+    caobien: {
+      id: 'caobien',
+      name: 'Hồn Cao Biền',
+      title: 'Đại Boss Cổ Loa/Đại La (321K HP)',
+      zone: 'daila',
+      x: 1250,
+      y: 650,
+      drops: '35% Thần Khí tb, 100% Tier 7, 30% Bùa Hộ Rèn, 20% Ngọc Luyện, 2.2K Vàng'
+    },
+    thiencau: {
+      id: 'thiencau',
+      name: 'Thiên Cẩu',
+      title: 'Siêu Boss Thế Giới (1.11M HP - 12:30 & 20:30)',
+      zone: 'nghialinh',
+      x: 800,
+      y: 700,
+      mechanic: 'Khi trời tối, gõ 4 Trống Đồng ở 4 góc sân để phá khiên!',
+      drops: 'Thần Khí tb, Tier 7, Bùa Hộ Rèn'
+    },
+    mimic_9: {
+      id: 'yeuruong9',
+      name: 'Yêu Rương Đại La',
+      title: 'Rương Quái Vật Đại La (16.9K HP)',
+      zone: 'daila',
+      x: 2100,
+      y: 1800,
+      drops: 'Tier 7, 4% Thần Khí tb, 10% Bùa Hộ Rèn'
+    },
+    mimic_8: {
+      id: 'yeuruong8',
+      name: 'Yêu Rương Tràng An',
+      title: 'Rương Quái Vật Tràng An (16.7K HP)',
+      zone: 'trangan',
+      x: 1900,
+      y: 1600,
+      drops: 'Tier 7, 3% Thần Khí tb, 10% Bùa Hộ Rèn'
+    },
+    mimic_7: {
+      id: 'yeuruong7',
+      name: 'Yêu Rương Bạch Đằng',
+      title: 'Rương Quái Vật Bạch Đằng (13.7K HP)',
+      zone: 'songbd',
+      x: 2200,
+      y: 1900,
+      drops: 'Tier 6, 10% Bùa Hộ Rèn'
+    },
+    mimic_6: {
+      id: 'yeuruong6',
+      name: 'Yêu Rương Hát Môn',
+      title: 'Rương Quái Vật Hát Môn (13.4K HP)',
+      zone: 'hatmon',
+      x: 2300,
+      y: 1800,
+      drops: 'Tier 6, 10% Bùa Hộ Rèn'
+    },
+    hotinh: {
+      id: 'hotinh',
+      name: 'Hồ Tinh Chín Đuôi',
+      title: 'Boss Hang Hồ Tinh (14K HP)',
+      zone: 'hang',
+      x: 1380,
+      y: 700,
+      drops: 'Tier 2, Đồ Cam'
+    },
+    ngutinh: {
+      id: 'ngutinh',
+      name: 'Ngư Tinh',
+      title: 'Boss Thủy Phủ (90K HP)',
+      zone: 'thuyphu',
+      x: 1380,
+      y: 700,
+      drops: 'Tier 3, Ngọc Tị Thủy'
+    },
+    moctinh: {
+      id: 'moctinh',
+      name: 'Mộc Tinh',
+      title: 'Boss Cổ Thụ Ba Vì (132K HP)',
+      zone: 'cothu',
+      x: 1380,
+      y: 700,
+      drops: 'Tier 4, Bùa Lá Rừng'
+    },
+    chantinh: {
+      id: 'chantinh',
+      name: 'Chằn Tinh',
+      title: 'Boss Hang Chằn Kim Sơn (182K HP)',
+      zone: 'hangchan',
+      x: 1380,
+      y: 700,
+      drops: 'Tier 5, Cung Tên Thần'
+    },
+    xuongho: {
+      id: 'xuongho',
+      name: 'Tà Thần Xương Hổ',
+      title: 'Boss Điện Xương Hổ (196K HP)',
+      zone: 'dienxh',
+      x: 1380,
+      y: 700,
+      drops: 'Tier 5, Ấn Diêm Đình'
+    },
+    todinh: {
+      id: 'todinh',
+      name: 'Thái Thú Tô Định',
+      title: 'Boss Hát Môn (257K HP)',
+      zone: 'hatmon',
+      x: 2800,
+      y: 720,
+      drops: 'Tier 6, Lụa Mê Linh'
+    },
+    haba: {
+      id: 'haba',
+      name: 'Hà Bá Yểm Huyệt',
+      title: 'Boss Sông Bạch Đằng (262K HP)',
+      zone: 'songbd',
+      x: 2750,
+      y: 2420,
+      drops: 'Tier 6, Mắt Thủy Quái'
+    },
+    nghechua: {
+      id: 'nghechua',
+      name: 'Nghê Chúa Động Thiên',
+      title: 'Boss Động Thiên (317K HP)',
+      zone: 'dongthien',
+      x: 1500,
+      y: 1200,
+      drops: 'Tier 7, Ngọc Tinh Luyện'
+    }
+  };
+
+  function handleBossHunterStep(me, now) {
+    if (!cfg.bossHunter || cfg.bossHunter === 'none') return false;
+    const bInfo = BOSS_DATABASE[cfg.bossHunter];
+    if (!bInfo) return false;
+
+    const curZone = window.GAME?.world?.zone?.id;
+    if (!curZone) return false;
+
+    // A. Nếu chưa ở đúng zone của Boss: Tự động tìm đường xuyên map!
+    if (curZone !== bInfo.zone) {
+      const r = safeMapRoute(curZone, bInfo.zone);
+      if (r && r.length > 0) {
+        const p = r[0].portal;
+        const distP = Math.hypot(p.x - me.x, p.y - me.y);
+        if (distP <= 45 && now - lastZoneTransitionTime >= 2500) {
+          setSteeringVector(p.x - me.x, p.y - me.y);
+        } else {
+          const s = calculateDirectSteering(me, p.x, p.y);
+          setSteeringVector(s.dx, s.dy);
+        }
+        if (statusTxt) statusTxt.textContent = `👑 SĂN BOSS: Đi sang ${bInfo.zone} săn ${bInfo.name}...`;
+        return true;
+      }
+    }
+
+    // B. Đã ở đúng zone: Kiểm tra xem Boss đã spawn trên map chưa:
+    const activeBoss = (window.GAME?.world?.mobs || []).find(m => isMobValidAndAlive(m) && (m.kind === bInfo.id || getMobDef(m)?.id === bInfo.id || isBossMob(m)));
+    if (activeBoss) {
+      // Đã thấy Boss: Nhường cho combat loop để xả chiêu và câu Boss trong tầm!
+      if (statusTxt) statusTxt.textContent = `👑 PHÁT HIỆN ${bInfo.name}: Đang câu boss & xả chiêu!`;
+      return false;
+    }
+
+    // C. Chưa thấy Boss trên màn hình: Di chuyển tới đúng tọa độ hang ổ / điểm spawn của Boss!
+    const distTarget = Math.hypot(bInfo.x - me.x, bInfo.y - me.y);
+    if (distTarget > 90) {
+      const s = calculateDirectSteering(me, bInfo.x, bInfo.y);
+      setSteeringVector(s.dx, s.dy);
+      if (statusTxt) statusTxt.textContent = `👑 TỚI Ổ BOSS ${bInfo.name} (${Math.round(distTarget)}px)...`;
+      return true;
+    } else {
+      // Đã đứng ngay tọa độ spawn: Phục kích chờ Boss ra!
+      stopMoving();
+      if (statusTxt) statusTxt.textContent = `👑 PHỤC KÍCH: Chờ ${bInfo.name} xuất hiện (${bInfo.title})`;
+      return true;
+    }
+  }
+
+  // =========================================================================
+  // BỘ TỰ ĐỘNG SĂN NGUYÊN LIỆU & NÂNG CẤP KỸ NĂNG, CƯỜNG HÓA TRANG BỊ (v16.3.0)
   // =========================================================================
 
   const UPGRADE_MATS = {
@@ -3468,7 +3739,7 @@
                   cursor: grab; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(0,230,118,0.3);">
         <div style="display: flex; align-items: center; gap: 7px; font-weight: bold; font-size: 12px; color: #fff;">
           <span style="font-size: 14px;">🤖</span>
-          <span style="background: linear-gradient(90deg, #00e676, #00b0ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 800; letter-spacing: 0.5px;">CỔ GIỚI BOT v16.2.0</span>
+          <span style="background: linear-gradient(90deg, #00e676, #00b0ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 800; letter-spacing: 0.5px;">CỔ GIỚI BOT v16.3.0</span>
           <span style="background: rgba(0,230,118,0.2); border: 1px solid #00e676; color: #00e676; font-size: 9px; padding: 1px 5px; border-radius: 8px; font-weight: 700;">60 FPS</span>
         </div>
         <div style="display: flex; gap: 6px; align-items: center;">
@@ -3496,6 +3767,32 @@
       <div style="flex: 1; overflow-y: auto; max-height: 290px; padding: 8px 10px; display: flex; flex-direction: column; gap: 7px; scrollbar-width: thin; scrollbar-color: #00e676 rgba(0,0,0,0.3);">
         <!-- TAB 1: CHIẾN ĐẤU -->
         <div id="sm-tab-combat" class="sm-tab-content" style="display: flex; flex-direction: column; gap: 7px;">
+          <!-- Card Săn Boss & Yêu Rương Thần Thoại (v16.3.0) -->
+          <div style="background: linear-gradient(135deg, rgba(50, 15, 15, 0.95), rgba(25, 10, 35, 0.95)); border: 1.5px solid #ff5252; border-radius: 8px; padding: 7px 9px; box-shadow: 0 0 10px rgba(255,82,82,0.25);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+              <span style="font-weight: 800; color: #ff5252; font-size: 11px;">👑 SĂN BOSS & YÊU RƯƠNG:</span>
+              <span id="sm-boss-status-badge" style="background: rgba(255,82,82,0.2); color: #ff8a80; padding: 1px 6px; border-radius: 4px; font-size: 9px; font-weight: bold;">Tự do</span>
+            </div>
+            <select id="sm-boss-sel" style="width: 100%; background: #120815; color: #ff8a80; border: 1px solid #ff5252; padding: 4px 6px; border-radius: 6px; font-size: 10.5px; outline: none; cursor: pointer; margin-bottom: 5px;">
+              <option value="none">-- Không chọn (Farm bãi bình thường) --</option>
+              <option value="caobien">🔥 Hồn Cao Biền (Đại La - 35% Thần Khí tb, Tier 7, Bùa Rèn)</option>
+              <option value="thiencau">🐺 Thiên Cẩu (Nghĩa Lĩnh - World Boss 12:30/20:30)</option>
+              <option value="mimic_9">📦 Yêu Rương Đại La (Drop Tier 7 & Thần Khí tb)</option>
+              <option value="mimic_8">📦 Yêu Rương Tràng An (Drop Tier 7 & Thần Khí tb)</option>
+              <option value="mimic_7">📦 Yêu Rương Bạch Đằng (Drop Tier 6 & Bùa Hộ Rèn)</option>
+              <option value="mimic_6">📦 Yêu Rương Hát Môn (Drop Tier 6 & Bùa Hộ Rèn)</option>
+              <option value="hotinh">🦊 Hồ Tinh Chín Đuôi (Hang Hồ Tinh - 14K HP)</option>
+              <option value="ngutinh">🐟 Ngư Tinh (Thủy Phủ - 90K HP)</option>
+              <option value="moctinh">🌲 Mộc Tinh (Cổ Thụ Ba Vì - 132K HP)</option>
+              <option value="chantinh">👹 Chằn Tinh (Hang Chằn Kim Sơn - 182K HP)</option>
+              <option value="xuongho">🐯 Tà Thần Xương Hổ (Điện Xương Hổ - 196K HP)</option>
+              <option value="todinh">⚔️ Thái Thú Tô Định (Hát Môn - 257K HP)</option>
+              <option value="haba">🌊 Hà Bá Yểm Huyệt (Sông Bạch Đằng - 262K HP)</option>
+              <option value="nghechua">🦁 Nghê Chúa Động Thiên (317K HP)</option>
+            </select>
+            <div id="sm-boss-desc" style="font-size: 9.5px; color: #b0bec5; font-style: italic; margin-bottom: 5px; line-height: 1.2;">Chọn Boss để bot tự tìm đường xuyên map đến ổ Boss và thả diều 3 hướng tiêu diệt!</div>
+            <button id="sm-btn-hunt-boss" style="width: 100%; padding: 5px; background: linear-gradient(90deg, #d32f2f, #ff5252); border: none; border-radius: 5px; color: #fff; font-size: 10.5px; font-weight: bold; cursor: pointer;">🎯 KÍCH HOẠT SĂN BOSS NGAY</button>
+          </div>
           <!-- Role Đánh Gần & Xa Selector (Học từ CoViet) -->
           <div style="background: rgba(16, 21, 31, 0.9); border: 1px solid rgba(0, 229, 255, 0.25); border-radius: 8px; padding: 6px 9px; display: flex; flex-direction: column; gap: 4px; font-size: 10.5px; margin-bottom: 5px;">
             <div style="display: flex; justify-content: space-between; align-items: center;">
@@ -3711,7 +4008,7 @@
       
       <!-- Top Telemetry Row -->
       <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 4px;">
-        <span id="sm-mini-status" style="font-weight: bold; color: #00e676; font-size: 11px;">🟢 v16.2.0</span>
+        <span id="sm-mini-status" style="font-weight: bold; color: #00e676; font-size: 11px;">🟢 v16.3.0</span>
         <span style="color: #ff5252;">❤️ <b id="sm-mini-hp">100%</b></span>
         <span style="color: #69f0ae;">🩸 <b id="sm-mini-pots">0</b></span>
         <span style="color: #ffd740;">💰 <b id="sm-mini-gold">0</b></span>
@@ -4668,8 +4965,18 @@
     // 2. AUTO-QUEST CONTROLLER (HỌC TỪ COVIET)
     // =======================================================================
     if (cfg.autoQuest && !autoShopState.active && !storageState.active) {
-      const isQuestNavigating = handleAutoQuest(me, now);
-      if (isQuestNavigating) return;
+      const selfDefenseThreat = findQuestSelfDefenseThreat(me);
+      if (selfDefenseThreat) {
+        devState.retaliationTargetId = selfDefenseThreat.id;
+        devState.selfDefenseCount++;
+        if (statusTxt) {
+          statusTxt.textContent = 🛡️ TỰ VỆ LÀM Q: Đang đánh trả [] cắn lén (px)!;
+        }
+      } else {
+        devState.retaliationTargetId = null;
+        const isQuestNavigating = handleAutoQuest(me, now);
+        if (isQuestNavigating) return;
+      }
     }
 
     // Cập nhật giao diện Quest tab theo thời gian thực:
@@ -4979,7 +5286,7 @@
     } else if (isPinnedAgainstWall || (isCurrentlyStuck && now < stuckUntil)) {
       movementState = 'RETREAT';
       // Dò tia có độ dài di chuyển tối đa trong 16 hướng ra khoảng trống
-      const kiteVec = computeCongaKiteVector(me, state.pursuers, state.spawnCenter, state.isBoss);
+      const kiteVec = computeCongaKiteVector(me, state.pursuers, state.spawnCenter, state.isBoss, targetMob);
       setSteeringVector(kiteVec.vx, kiteVec.vy);
       if (statusTxt) {
         statusTxt.textContent = `🚨 PHÁ VÂY KHẨN CẤP: Bẻ lái trượt qua khe quái ra khoảng trống!`;
@@ -5016,7 +5323,7 @@
           vx = ux * 0.4 + tx * 0.6 * strafeDir;
           vy = uy * 0.4 + ty * 0.6 * strafeDir;
         } else {
-          const kiteVec = computeCongaKiteVector(me, state.pursuers, state.spawnCenter, state.isBoss);
+          const kiteVec = computeCongaKiteVector(me, state.pursuers, state.spawnCenter, state.isBoss, targetMob);
           vx = kiteVec.vx;
           vy = kiteVec.vy;
         }
@@ -5069,7 +5376,7 @@
     // Xả kỹ năng: Khi bị vây khẩn cấp, kích hoạt Choáng diện rộng ngay lập tức!
     executeOracleAttack(targetMob, now, distToTarget, state.dMin, state.closestMob, state.pursuerCount, isPinnedAgainstWall, state.isPvP);
 
-    if (miniStatusEl) miniStatusEl.textContent = cfg.enabled ? '🟢 Bot v16.2.0' : '🔴 Tạm dừng';
+    if (miniStatusEl) miniStatusEl.textContent = cfg.enabled ? '🟢 Bot v16.3.0' : '🔴 Tạm dừng';
     if (miniAtkEl) miniAtkEl.textContent = devState.totalAttacks;
     if (miniBreakoutEl) miniBreakoutEl.textContent = devState.breakoutsTriggered;
     if (miniStateEl && statusTxt) miniStateEl.textContent = statusTxt.textContent;
@@ -5077,7 +5384,7 @@
 
 
   window._ancientMasterBot = {
-    version: '16.2.0',
+    version: '16.3.0',
     cfg,
     devState,
     skillTimers,
@@ -5106,10 +5413,10 @@
       if (origUiChatLine && window.GAME?.ui) window.GAME.ui.chatLine = origUiChatLine;
       if (origUiToggleChat && window.GAME?.ui) window.GAME.ui.toggleChat = origUiToggleChat;
       delete window._ancientMasterBot;
-      console.log("%c[BOT v16.2.0] Đã gỡ bỏ toàn bộ giao diện và tiến trình.", "color: #ff9800; font-weight: bold;");
+      console.log("%c[BOT v16.3.0] Đã gỡ bỏ toàn bộ giao diện và tiến trình.", "color: #ff9800; font-weight: bold;");
     }
   };
 
-    console.log("%c[BOT v16.2.0] KHỞI ĐỘNG THÀNH CÔNG: VUA NÂNG CẤP KỸ NĂNG & CƯỜNG HÓA TRANG BỊ, TỰ ĐỘNG SĂN NGUYÊN LIỆU ĐỈNH CAO!", "color: #00e676; font-size: 14px; font-weight: bold;");
+    console.log("%c[BOT v16.3.0] KHỞI ĐỘNG THÀNH CÔNG: MASTER KITING & BOSS HUNTER: NÉ 3 HƯỚNG CÂU BOSS TRONG TẦM, TỰ VỆ LÀM Q & SĂN 14 BOSS THẦN THOẠI!", "color: #00e676; font-size: 14px; font-weight: bold;");
   }
 })();
